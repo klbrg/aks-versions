@@ -1,0 +1,38 @@
+name: Publish AKS versions
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: Resolve versions but create no tags
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: publish-versions
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish version tags
+        env:
+          DRY_RUN: ${{ github.event.inputs.dryRun || 'false' }}
+        run: ./scripts/publish-versions.sh
