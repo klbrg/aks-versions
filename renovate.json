@@ -31,7 +31,7 @@
       "customType": "regex",
       "managerFilePatterns": ["/\\.tf$/"],
       "matchStrings": [
-        "#\\s*renovate:\\s*aks-stream=(?<depName>[a-z0-9]+-(?:rapid|stable|patch-\\d+\\.\\d+))\\s*\\n\\s*(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+        "#\\s*renovate:\\s*aks-stream=(?<depName>(?:[a-z0-9]+-)?(?:rapid|stable|patch-\\d+\\.\\d+))\\s*\\n\\s*(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
       "packageNameTemplate": "klbrg/aks-versions",
       "datasourceTemplate": "github-tags",

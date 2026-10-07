@@ -94,7 +94,7 @@ fresh UAMI.
 | Repository variable | Effect |
 |---|---|
 | `REGIONS` | space separated short names, e.g. `swedencentral northeurope`. Default is every AKS region |
-| `PRIMARY_REGION` | whose `rapid` release carries GitHub's "Latest" badge. Defaults to the first region |
+| `REGION_GRACE_DAYS` | how long a newly appeared region is ignored by the regionless streams. Default 30 |
 | `STANDARD_SUPPORT_ONLY` | `true` drops `patch-<minor>` streams for minors that have left standard support |
 
 `REGIONS` is the one that matters. Every region is about 450 tags at bootstrap and roughly
@@ -107,12 +107,7 @@ effectively frozen. All the growth comes from the minors you would keep. It also
 serving anyone deliberately sitting on an LTS version. Reach for `REGIONS` instead unless
 you specifically do not want LTS minors mirrored.
 
-`PRIMARY_REGION` exists because GitHub always designates one release as "Latest" and there
-is no way to opt out. Left to its heuristics it compares dates and semver across every
-region's tag namespace at once and lands somewhere arbitrary, typically an out-of-support
-minor in a region you do not use. Pinning it to the `rapid` head of your primary region
-makes the badge read "the newest GA version AKS offers", which is the only one-line summary
-of this repo that is true.
+`REGION_GRACE_DAYS` is explained under [Regionless streams](#regionless-streams).
 
 Then run the workflow once by hand. On a bootstrap it creates every tag and, because every
 tag is new and shares one date, backfills a Release for each of them too. After that it only
@@ -121,7 +116,8 @@ touches what changed.
 ## Tag scheme
 
 ```
-<region>-<channel>-v<version>
+<region>-<channel>-v<version>     per region
+<channel>-v<version>              regionless: available in every tracked region
 ```
 
 | Channel | Meaning |
@@ -141,6 +137,69 @@ swedencentral-patch-1.34-v1.34.11
 
 56 regions times roughly 8 streams each is about 450 tags at steady state, growing only
 when Azure ships a new patch somewhere.
+
+## Regionless streams
+
+AKS rolls patches out region by region. The release tracker exposes nine ordered rollout
+groups and at the time of writing a 36-region group was `In Progress`, so at any moment
+some regions can be a patch or two behind others.
+
+That matters if several clusters in different regions share one version string, which is
+the normal case for a platform repo. The only safe value is then the **lowest** of the
+per-region heads, because anything higher fails to apply in the laggard. The regionless
+streams publish exactly that:
+
+```
+rapid-v1.36.4          newest GA patch available in EVERY tracked region
+stable-v1.35.8
+patch-1.35-v1.35.8
+```
+
+Follow them with the region left out of the marker:
+
+```hcl
+# renovate: aks-stream=stable
+k8s_version = "1.35.8"
+```
+
+Each release body names the binding region, the slowest tracked region to offer that
+version, so a stalled stream tells you who you are waiting for.
+
+**"Every tracked region" means the regions this instance tracks.** On an instance that
+tracks all 56, it means all 56, which is far more conservative than anyone needs. Narrowing
+`REGIONS` to the regions you actually run in is what makes these streams say something
+useful about your estate.
+
+### Two guards, for one failure mode
+
+AKS adds regions. A brand new region offering an older patch would otherwise set the value
+for everybody and stall the stream on a region nobody uses. One new region would poison it.
+
+1. **A grace period.** A region is ignored by the regionless streams until it has been
+   tracked for `REGION_GRACE_DAYS` (default 30), measured from its oldest tag, so a newly
+   appeared region cannot bind the intersection before it has had a fair chance to catch
+   up. A bootstrap is exempt, since then every region is new and excluding them all would
+   publish nothing.
+2. **Monotonicity.** A regionless tag is only created when the candidate is higher than the
+   current stream head. A lagging region therefore cannot add a backwards tag dated today,
+   which would be noise and would carry a misleading date.
+
+A stall is still possible once a region is past its grace period and is genuinely behind.
+That is the stream being honest rather than broken, and the run logs which region is
+responsible:
+
+```
+regionless rapid stalls at 1.36.4: australiacentral2 only offers 1.36.2
+```
+
+A stream is also skipped entirely, rather than guessed at, when some tracked region does
+not offer that minor at all.
+
+The regionless `rapid` release is what carries GitHub's "Latest" badge. GitHub always
+designates one release as latest and offers no way to opt out, and left to its own
+heuristics it compares dates and semver across every region's tag namespace at once and
+lands somewhere arbitrary. The newest GA version available everywhere is the one summary of
+this repo that is both canonical and true.
 
 ## Why annotated tags
 

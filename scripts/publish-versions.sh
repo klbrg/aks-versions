@@ -37,10 +37,8 @@ RELEASE_STREAMS="${RELEASE_STREAMS:-rapid stable patch-*}"
 BACKFILL_RELEASES="${BACKFILL_RELEASES:-auto}"
 REGIONS="${REGIONS:-}"
 STANDARD_SUPPORT_ONLY="${STANDARD_SUPPORT_ONLY:-false}"
-# Which release carries GitHub's "Latest" badge. Without an explicit choice GitHub
-# picks by date and semver across 56 unrelated tag namespaces, which lands on an
-# arbitrary region and an out-of-support minor.
-PRIMARY_REGION="${PRIMARY_REGION:-}"
+# Days a newly appeared region must be tracked before it can bind the regionless streams.
+REGION_GRACE_DAYS="${REGION_GRACE_DAYS:-30}"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)"
@@ -118,12 +116,60 @@ if [ "$backfill" = "true" ]; then
   log "backfilling releases for pre-existing tags as well"
 fi
 
+# Writes the release body for one tag. $4 is a region for a per-region stream, or the
+# literal "all" for a regionless one, in which case $5 is the binding region.
+write_notes() {
+  local tag="$1" stream="$2" version="$3" region="$4" binding="${5:-}"
+  local minor="${version%.*}"
+  local anchor="v$(printf '%s' "$version" | tr -d '.')"
+  local changelog="https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-$minor.md#$anchor"
+  local label; label="$(stream_label "$stream")"
+
+  if [ "$region" = "all" ]; then
+    cat > "$tmp/notes/$tag.md" <<NOTES
+Kubernetes \`$version\` is available in **every one of the $mature_total regions this
+instance counts**, and it is $label.
+
+The binding constraint is \`$binding\`, the slowest tracked region to offer it. Pin this
+stream when several clusters in different regions must share one version string.
+
+- Upstream Kubernetes changelog: $changelog
+- AKS release notes (rollout waves): https://github.com/Azure/AKS/releases
+
+Per-region tags carry the upgrade graph and support plan, which are region specific.
+NOTES
+    return
+  fi
+
+  local upgrades plan
+  upgrades=$(jq -r --arg m "$minor" --arg v "$version" '
+    .values[] | select(.version == $m) | .patchVersions[$v].upgrades // []
+    | if length == 0 then "none" else join(", ") end' "$tmp/v.json")
+  plan=$(jq -r --arg m "$minor" '
+    .values[] | select(.version == $m) | .capabilities.supportPlan | join(", ")' "$tmp/v.json")
+
+  cat > "$tmp/notes/$tag.md" <<NOTES
+AKS offers Kubernetes \`$version\` in \`$region\`, and it is $label.
+
+- Upstream Kubernetes changelog: $changelog
+- AKS release notes (rollout waves): https://github.com/Azure/AKS/releases
+
+**Upgrade targets AKS permits from \`$version\`:** $upgrades
+
+**Support plan:** $plan
+
+AKS lags upstream, so a patch present in the Kubernetes changelog is not necessarily
+offered here. Verify against \`az aks get-versions --location $region\`.
+NOTES
+}
+
 git config user.name  "aks-versions-bot"
 git config user.email "aks-versions-bot@users.noreply.github.com"
 
 # --- collect -----------------------------------------------------------------
 created=0
 failed=0
+: > "$tmp/observed.txt"
 while read -r region; do
   if ! az aks get-versions --location "$region" -o json > "$tmp/v.json" 2> "$tmp/err"; then
     log "WARN  $region: get-versions failed: $(tr -d '\n' < "$tmp/err" | cut -c1-110)"
@@ -131,6 +177,7 @@ while read -r region; do
     continue
   fi
   while IFS='|' read -r stream version; do
+    printf '%s|%s|%s\n' "$stream" "$version" "$region" >> "$tmp/observed.txt"
     tag="${region}-${stream}-v${version}"
     is_new=true
     if grep -qxF "$tag" "$tmp/existing.txt"; then
@@ -152,30 +199,85 @@ while read -r region; do
     if [ "$is_new" != "true" ] && [ "$backfill" != "true" ]; then continue; fi
     if grep -qxF "$tag" "$tmp/have_releases.txt"; then continue; fi
 
-    minor="${version%.*}"
-    anchor="v$(printf '%s' "$version" | tr -d '.')"
-    upgrades=$(jq -r --arg m "$minor" --arg v "$version" '
-      .values[] | select(.version == $m) | .patchVersions[$v].upgrades // []
-      | if length == 0 then "none" else join(", ") end' "$tmp/v.json")
-    plan=$(jq -r --arg m "$minor" '
-      .values[] | select(.version == $m) | .capabilities.supportPlan | join(", ")' "$tmp/v.json")
-    label="$(stream_label "$stream")"
-
-    cat > "$tmp/notes/$tag.md" <<NOTES
-AKS offers Kubernetes \`$version\` in \`$region\`, and it is $label.
-
-- Upstream Kubernetes changelog: https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-$minor.md#$anchor
-- AKS release notes (rollout waves): https://github.com/Azure/AKS/releases
-
-**Upgrade targets AKS permits from \`$version\`:** $upgrades
-
-**Support plan:** $plan
-
-AKS lags upstream, so a patch present in the Kubernetes changelog is not necessarily
-offered here. Verify against \`az aks get-versions --location $region\`.
-NOTES
+    write_notes "$tag" "$stream" "$version" "$region"
   done < <(jq -r --argjson standard_only "${STANDARD_SUPPORT_ONLY:-false}" -f "$here/streams.jq" "$tmp/v.json")
 done < "$tmp/regions.txt"
+
+# --- regionless streams ------------------------------------------------------
+# For each stream, the lowest version across the tracked regions, i.e. the newest version
+# actually available everywhere. Two guards, both for the same failure mode: AKS adds
+# regions, and a brand new region offering an older patch would otherwise set the value for
+# everyone and stall the stream on a region nobody uses.
+#
+#   1. A region is excluded until it has been tracked for REGION_GRACE_DAYS, measured from
+#      its oldest tag. A newly appeared region therefore cannot bind the intersection
+#      before it has had a fair chance to catch up. A bootstrap is exempt, since on a
+#      bootstrap every region is new and excluding them all would emit nothing.
+#   2. A tag is only created when the candidate is HIGHER than the current stream head, so
+#      the stream is monotonic. Without this, a lagging region would add a backwards tag
+#      dated today, which is noise at best.
+#
+# A stall is still possible once a region is past its grace period and genuinely behind.
+# That is the stream being honest. The binding region is logged every run so it is visible.
+: > "$tmp/mature.txt"
+if [ "$tag_count" -eq 0 ]; then
+  cp "$tmp/regions.txt" "$tmp/mature.txt"
+  log "bootstrap: every region counts toward the regionless streams"
+else
+  cutoff=$(( $(date -u +%s) - REGION_GRACE_DAYS * 86400 ))
+  git for-each-ref --format='%(refname:short) %(taggerdate:unix)' refs/tags \
+    | awk -v cutoff="$cutoff" '
+        { split($1, p, "-"); if (p[1] != "" && $2 != "") {
+            if (!(p[1] in oldest) || $2 + 0 < oldest[p[1]]) oldest[p[1]] = $2 + 0 } }
+        END { for (r in oldest) if (oldest[r] <= cutoff) print r }' \
+    | sort -u > "$tmp/seen_mature.txt"
+  comm -12 "$tmp/regions.txt" "$tmp/seen_mature.txt" > "$tmp/mature.txt"
+  excluded=$(( $(wc -l < "$tmp/regions.txt") - $(wc -l < "$tmp/mature.txt") ))
+  if [ "$excluded" -gt 0 ]; then
+    log "excluding $excluded region(s) from the regionless streams: tracked for under $REGION_GRACE_DAYS days"
+  fi
+fi
+
+mature_total=$(wc -l < "$tmp/mature.txt")
+if [ "$mature_total" -gt 0 ]; then
+  awk -F'|' 'NR==FNR { keep[$1]; next } ($3 in keep)' "$tmp/mature.txt" "$tmp/observed.txt" \
+    > "$tmp/observed_mature.txt"
+  while IFS='|' read -r stream version binding count; do
+    [ "$count" -eq "$mature_total" ] || continue
+    head_now="$(git tag --list "${stream}-v*" | sed "s|^${stream}-v||" | sort -V | tail -1)"
+    if [ -n "$head_now" ] && [ "$head_now" = "$(printf '%s\n%s\n' "$head_now" "$version" | sort -V | tail -1)" ] \
+       && [ "$head_now" != "$version" ]; then
+      log "regionless $stream stalls at $head_now: $binding only offers $version"
+      continue
+    fi
+    tag="${stream}-v${version}"
+    if grep -qxF "$tag" "$tmp/existing.txt"; then
+      is_new=false
+    else
+      is_new=true
+      if [ "$DRY_RUN" = "true" ]; then
+        log "would tag $tag (available in all $mature_total regions, bound by $binding)"
+      else
+        git tag -a "$tag" \
+          -m "Kubernetes $version is the $stream target in all $mature_total tracked regions, bound by $binding (detected $(date -u +%FT%TZ))"
+      fi
+      created=$((created + 1))
+    fi
+    if ! wants_release "$stream"; then continue; fi
+    if [ "$is_new" != "true" ] && [ "$backfill" != "true" ]; then continue; fi
+    if grep -qxF "$tag" "$tmp/have_releases.txt"; then continue; fi
+    write_notes "$tag" "$stream" "$version" "all" "$binding"
+  done < <(sort "$tmp/observed_mature.txt" | awk -F'|' '
+      { if (!(($1) in best) || cmp($2, best[$1]) < 0) { best[$1] = $2; who[$1] = $3 }
+        n[$1]++ }
+      function cmp(a, b,   x, y, i) {
+        split(a, x, "."); split(b, y, ".")
+        for (i = 1; i <= 3; i++) { if (x[i] + 0 < y[i] + 0) return -1
+                                   if (x[i] + 0 > y[i] + 0) return 1 }
+        return 0
+      }
+      END { for (st in best) printf "%s|%s|%s|%d\n", st, best[st], who[st], n[st] }')
+fi
 
 pending=$(find "$tmp/notes" -name '*.md' | wc -l)
 log "new tags: $created   releases to create: $pending   regions that failed: $failed"
@@ -207,17 +309,14 @@ while IFS= read -r f; do
 done < <(find "$tmp/notes" -name '*.md')
 log "created $releases release(s)"
 
-# Designate a meaningful "Latest". The rapid head of the primary region is the newest GA
-# version AKS offers, which is the only summary of this repo that means anything.
-primary="$PRIMARY_REGION"
-if [ -z "$primary" ]; then
-  primary="$(head -1 "$tmp/regions.txt")"
-fi
-primary_tag="$(git tag --list "${primary}-rapid-v*" | sed "s|${primary}-rapid-v||" \
-  | sort -V | tail -1)"
-if [ -n "$primary_tag" ]; then
-  if gh release edit "${primary}-rapid-v${primary_tag}" --latest >/dev/null 2>&1; then
-    log "marked ${primary}-rapid-v${primary_tag} as the latest release"
+# Designate a meaningful "Latest". GitHub always picks one and offers no way to opt out;
+# left alone it compares dates and semver across every region's tag namespace and lands
+# somewhere arbitrary. The regionless rapid head is the one genuinely canonical summary:
+# the newest GA version available in every tracked region.
+latest_tag="$(git tag --list 'rapid-v*' | sed 's|^rapid-v||' | sort -V | tail -1)"
+if [ -n "$latest_tag" ]; then
+  if gh release edit "rapid-v${latest_tag}" --latest >/dev/null 2>&1; then
+    log "marked rapid-v${latest_tag} as the latest release"
   fi
 fi
 
