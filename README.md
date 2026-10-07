@@ -93,36 +93,19 @@ them.
 
 ## The publishing workflow
 
-`.github/workflows/publish-versions.yml` is the whole moving part.
+`.github/workflows/publish-versions.yml`:
 
-**Triggers.** `schedule` at `23 * * * *`, plus `workflow_dispatch` with `dryRun`, `regions` and
-`backfill`. A dispatch input overrides the matching repository variable for that run.
+- **Triggers.** `schedule` at `23 * * * *`, plus `workflow_dispatch` with `dryRun`, `regions`
+  and `backfill`, each overriding the matching repository variable for one run.
+- **Permissions.** `contents: write` for tags and releases, `id-token: write` for the OIDC
+  token. `concurrency` allows one run at a time.
+- **Steps.** `actions/checkout` with `fetch-depth: 0`, `azure/login`,
+  `scripts/publish-versions.sh`, then a keepalive step that pushes an empty commit once the
+  newest commit passes 50 days (see [Gotchas](#gotchas)). Both actions are pinned by commit SHA.
 
-**Permissions.** `contents: write` to push tags and create releases, `id-token: write` for the
-OIDC token. `concurrency` pins the job to one run at a time, so a dispatch queues rather than
-interleaving.
-
-**Steps.** `actions/checkout` with `fetch-depth: 0`, since the script compares against existing
-tags. `azure/login` by OIDC. `scripts/publish-versions.sh`. Then a keepalive step that pushes an
-empty commit once the newest commit passes 50 days, which stops GitHub disabling the schedule
-(see [Gotchas](#gotchas)). Both actions are pinned by commit SHA.
-
-What the script does, in the order the log shows it:
-
-1. **Regions.** Use `REGIONS`, or discover them from the provider and map display names to short
-   names, failing below `MIN_REGIONS`.
-2. **Existing state.** Count tags and releases, fetch remote tags, decide whether this run is a
-   bootstrap for `BACKFILL_RELEASES=auto`.
-3. **Collect.** `az aks get-versions` per region, reduced to `<stream>|<version>` lines by
-   `scripts/streams.jq`. A region that fails logs a `WARN` and is skipped without failing the
-   run.
-4. **Regionless streams.** Intersect the per-region heads, apply the grace period and the
-   monotonicity check, and log which region binds or stalls each stream.
-5. **Publish.** Push new annotated tags, create releases for `RELEASE_STREAMS`, mark
-   `rapid-v<head>` as latest. `DRY_RUN=true` stops here and logs what it would have done.
-
-Runs are idempotent: an existing tag is left alone, including its date, so a re-run never
-re-arms a soak.
+A region whose `get-versions` call fails logs a `WARN` and is skipped without failing the run.
+`rapid-v<head>` is marked as the latest release. Runs are idempotent: an existing tag keeps its
+date, so a re-run never re-arms a soak.
 
 ## Usage
 
