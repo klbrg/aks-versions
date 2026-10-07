@@ -139,7 +139,7 @@ The manager that reads it, already in `renovate.json`:
   "customType": "regex",
   "managerFilePatterns": ["/\\.tf$/"],
   "matchStrings": [
-    "#\\s*renovate:\\s*aks-stream=(?<depName>[a-z0-9]+-(?:rapid|stable))\\s*\\n\\s*(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+    "#\\s*renovate:\\s*aks-stream=(?<depName>[a-z0-9]+-(?:rapid|stable|patch-\\d+\\.\\d+))\\s*\\n\\s*(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
   ],
   "packageNameTemplate": "klbrg/aks-versions",
   "datasourceTemplate": "github-tags",
@@ -159,11 +159,49 @@ resolved independently:
 |---|---|---|---|
 | `germanywestcentral-rapid` | 1.36.0 | `^germanywestcentral-rapid-v(?<version>.+)$` | 1.36.4 |
 | `swedencentral-stable` | 1.35.0 | `^swedencentral-stable-v(?<version>.+)$` | 1.35.8 |
+| `germanywestcentral-patch-1.34` | 1.34.5 | `^germanywestcentral-patch-1.34-v(?<version>.+)$` | 1.34.11 |
 
 The marker has to sit on the line immediately above the version it governs. A file with
 several version attributes, such as a cluster plus its node pools, needs one marker per
 line. If every version in a directory follows the same channel, the path-based manager is
 less repetitive.
+
+### Pinning to a minor so an illegal jump is impossible
+
+AKS does not permit arbitrary minor jumps, and Renovate cannot know that: no datasource
+field carries the `upgrades` graph, so Renovate offers the head of whatever stream it is
+pointed at. The reachability is also not uniform. Within standard support a patch reaches
+its own minor plus exactly one more, while the LTS-only minors (1.33 and below) may jump up
+to three to get back into the support window:
+
+| Pinned at | Can reach |
+|---|---|
+| 1.35.0 … 1.35.7 | 1.35.x, 1.36.x |
+| 1.35.8, the latest of its minor | 1.36.x only |
+| 1.34.11 | 1.35.x only |
+| 1.33.13 | 1.34.x, 1.35.x, 1.36.x |
+
+So a cluster that skips a channel cycle can be offered a jump AKS refuses, and the refusal
+lands at `terraform apply`, after review and approval, because plan never asks AKS whether
+the hop is legal.
+
+Following `patch-<minor>` removes the possibility rather than managing it. That stream only
+ever contains one minor, so the illegal version is not in the dependency's version list at
+all. Verified above: pinned at 1.34.5 it resolved to 1.34.11 and did not offer 1.36.4,
+although that tag exists.
+
+```hcl
+# renovate: aks-stream=germanywestcentral-patch-1.34
+k8s_version = "1.34.5"
+```
+
+Moving to the next minor is then an edit to this one marker, reviewed on its own, which is
+the right shape for a control-plane upgrade. The `rapid` and `stable` streams remain useful
+as the signal that the channel target moved.
+
+If you would rather keep following `stable` and accept the risk, `separateMultipleMinor:
+true` raises a separate PR per minor so the legal intermediate step at least exists as its
+own PR. It does not suppress the far one, so ordering stays manual.
 
 ### Release notes
 
@@ -192,9 +230,11 @@ PR. Two facts make that work, both confirmed against Renovate's source:
   steady state, because a consumer's pin came from the same stream. Only the very first
   adoption of a stream, where the pin was never a channel target, goes without notes.
 
-`patch-<minor>` streams get no Release: they never cross a minor, so nobody would read the
-notes. Releases are created only for newly created tags, so the 448 tags that already exist
-are not backfilled; each stream gains notes the first time it moves.
+All three stream kinds get a Release, controlled by `RELEASE_STREAMS` (default
+`rapid stable patch-*`, space separated globs). `patch-<minor>` is included because a
+cluster that must never make an illegal minor jump follows that stream, so it is the one
+whose PRs actually get read. Releases are created only for newly created tags, so the 448
+tags that already exist are not backfilled; each stream gains notes the first time it moves.
 
 The release body carries what Azure will not give you anywhere else: the anchored upstream
 changelog link, the `supportPlan`, and the upgrade targets AKS permits from that version.
