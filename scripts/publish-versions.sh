@@ -22,7 +22,9 @@ set -euo pipefail
 
 MIN_REGIONS="${MIN_REGIONS:-40}"
 DRY_RUN="${DRY_RUN:-false}"
-RELEASE_STREAMS="${RELEASE_STREAMS:-rapid stable}"
+# Glob patterns, space separated. patch-* is included because a cluster that should never
+# make an illegal minor jump follows patch-<minor>, so that is the stream whose PRs get read.
+RELEASE_STREAMS="${RELEASE_STREAMS:-rapid stable patch-*}"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)"
@@ -34,8 +36,20 @@ log() { printf '%s  %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
 
 wants_release() {
   local s="$1" w
-  for w in $RELEASE_STREAMS; do [ "$s" = "$w" ] && return 0; done
+  for w in $RELEASE_STREAMS; do
+    # shellcheck disable=SC2254  # $w is intentionally a glob
+    case "$s" in $w) return 0 ;; esac
+  done
   return 1
+}
+
+stream_label() {
+  case "$1" in
+    rapid)   printf '%s' 'the current **rapid** channel target, the latest patch on the newest supported minor' ;;
+    stable)  printf '%s' 'the current **stable** channel target, the latest patch on minor N-1' ;;
+    patch-*) printf 'the latest patch on minor `%s`' "${1#patch-}" ;;
+    *)       printf 'the current **%s** target' "$1" ;;
+  esac
 }
 
 log "discovering AKS regions"
@@ -95,8 +109,9 @@ while read -r region; do
       plan=$(jq -r --arg m "$minor" '
         .values[] | select(.version == $m) | .capabilities.supportPlan | join(", ")' "$tmp/v.json")
 
+      label="$(stream_label "$stream")"
       cat > "$tmp/notes/$tag.md" <<NOTES
-AKS offers Kubernetes \`$version\` in \`$region\`, and it is the current **$stream** channel target.
+AKS offers Kubernetes \`$version\` in \`$region\`, and it is $label.
 
 - Upstream Kubernetes changelog: https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-$minor.md#$anchor
 - AKS release notes (rollout waves): https://github.com/Azure/AKS/releases

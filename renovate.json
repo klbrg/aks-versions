@@ -31,7 +31,7 @@
       "customType": "regex",
       "managerFilePatterns": ["/\\.tf$/"],
       "matchStrings": [
-        "#\\s*renovate:\\s*aks-stream=(?<depName>[a-z0-9]+-(?:rapid|stable))\\s*\\n\\s*(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+        "#\\s*renovate:\\s*aks-stream=(?<depName>[a-z0-9]+-(?:rapid|stable|patch-\\d+\\.\\d+))\\s*\\n\\s*(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
       "packageNameTemplate": "klbrg/aks-versions",
       "datasourceTemplate": "github-tags",
@@ -41,7 +41,7 @@
   ],
   "packageRules": [
     {
-      "matchDepNames": ["aks-gwc-stable", "aks-gwc-rapid", "/-(?:rapid|stable)$/"],
+      "matchPackageNames": ["klbrg/aks-versions"],
       "prBodyNotes": [
         "Upstream Kubernetes changelog: https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-{{{newMajor}}}.{{{newMinor}}}.md",
         "AKS release notes: https://github.com/Azure/AKS/releases",
