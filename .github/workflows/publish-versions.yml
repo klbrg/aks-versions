@@ -2,7 +2,22 @@ name: Publish AKS versions
 
 on:
   schedule:
-    - cron: "0 4 * * *"
+    # Hourly, at minute 23. This is a shared feed, and the publish interval is the one thing
+    # a consumer cannot tune: pointing Renovate at an hourly schedule against a feed that
+    # updates twice a day gains them nothing. So the interval is set for the consumer who
+    # runs no soak and wants a patch as soon as it exists, not for this repo's own taste.
+    #
+    # Cheap enough to not think about: a steady-state run is ~95s and 56 ARM reads, and
+    # Actions minutes are free on a public repo. The run is idempotent, so the 23 hours a
+    # day that find nothing create nothing and leave existing tag dates untouched.
+    #
+    # Off the hour because GitHub's scheduled queue is best effort and the top of the hour
+    # is its busiest slot. Hourly also makes that unreliability self-healing: a dropped run
+    # costs an hour, where a dropped daily run costs a day.
+    #
+    # Self-hosting for a single estate is a different problem. If every consumer is yours and
+    # soaks for days, once or twice a day is plenty: "17 5,17 * * *" was the previous value.
+    - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
       dryRun:
@@ -58,3 +73,32 @@ jobs:
           REGION_GRACE_DAYS: ${{ vars.REGION_GRACE_DAYS }}
           MIN_REGIONS: ${{ vars.MIN_REGIONS }}
         run: ./scripts/publish-versions.sh
+
+      # GitHub disables scheduled workflows in a public repo after 60 days with no repository
+      # activity, and only commits count as activity: the tags and releases this job creates
+      # do not. Without this step the schedule switches itself off roughly two months after
+      # the last human commit, and the only signal is a warning email.
+      #
+      # Only on the schedule, because a dispatch run already means someone is active. The
+      # check is on commit age, so this fires about once every 50 days and not hourly, and
+      # the commit resets the clock for every later run.
+      - name: Keep the schedule alive
+        if: always() && github.event_name == 'schedule'
+        env:
+          KEEPALIVE_AFTER_DAYS: "50"
+        run: |
+          set -euo pipefail
+          age=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "newest commit is ${age} day(s) old"
+          if [ "$age" -lt "$KEEPALIVE_AFTER_DAYS" ]; then
+            echo "under the ${KEEPALIVE_AFTER_DAYS} day threshold, nothing to do"
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit --allow-empty -m 'chore: keep the scheduled workflow enabled'
+          # Deliberately non-fatal. There are 10 days of hourly attempts left before the
+          # cutoff, so a transient failure self-heals, and it must not mark a successful
+          # publish as failed.
+          git push origin "HEAD:${GITHUB_REF_NAME}" \
+            || echo "WARN  keepalive push failed; retrying on the next run"

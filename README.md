@@ -7,7 +7,7 @@ Publishes the Kubernetes versions AKS offers per region as git tags, so Renovate
 
 Renovate has no AKS datasource, and no public feed lists patch versions per region. The only
 authoritative source is the ARM call behind `az aks get-versions`, which requires
-authentication. This repo runs it daily across every AKS region and republishes the result as
+authentication. This repo runs it hourly across every AKS region and republishes the result as
 annotated git tags and GitHub Releases. Renovate reads those with its built-in `github-tags`
 datasource and needs no Azure credential of its own.
 
@@ -120,9 +120,28 @@ you care about it.
 
 `.github/workflows/publish-versions.yml` is the whole moving part.
 
-**Triggers.** `schedule` at `0 4 * * *`, plus `workflow_dispatch` with three inputs: `dryRun`,
-`regions` and `backfill`. A dispatch input overrides the matching repository variable for that
-one run, which is the intended way to test a change before it runs unattended.
+**Triggers.** `schedule` at `23 * * * *`, so hourly, plus `workflow_dispatch` with three
+inputs: `dryRun`, `regions` and `backfill`. A dispatch input overrides the matching repository
+variable for that one run, which is the intended way to test a change before it runs
+unattended.
+
+Hourly because the publish interval is the one setting a consumer cannot tune. Everything else
+about consumption is theirs to choose, but pointing Renovate at an hourly schedule against a
+feed that updates once a day gains them nothing, so the interval has to suit the consumer who
+runs no soak and wants a patch as soon as it exists. A soak of days makes the interval
+irrelevant, which is an argument for the shorter one, not the longer.
+
+It is cheap enough to stop thinking about: a steady-state run is about 95 seconds and 56 ARM
+reads, and Actions minutes are free on a public repository. The run is idempotent, so the
+hours that find nothing create nothing and leave existing tag dates untouched.
+
+Minute 23 rather than the hour because GitHub's scheduled queue is best effort and the top of
+the hour is its busiest slot. Running hourly also makes that unreliability self-healing: a
+dropped run costs an hour, where a dropped daily run costs a day.
+
+Self-hosting for one estate is a different problem from serving a shared feed. If every
+consumer is yours and soaks for days, once or twice a day is plenty, and the comment in the
+workflow says so.
 
 **Permissions.** `contents: write` to push tags and create releases, `id-token: write` to mint
 the OIDC token for `azure/login`. No other scope, and no long-lived credential. `concurrency`
@@ -133,6 +152,17 @@ nightly run queues instead of leaving tags half pushed.
 existing tags. Then `azure/login` by OIDC. Then one `run` of `scripts/publish-versions.sh`,
 with the configuration above passed as environment variables. Both actions are pinned by
 commit SHA with the version in a trailing comment.
+
+A fourth step keeps the schedule alive. GitHub disables scheduled workflows in a public
+repository after 60 days with no repository activity, and only commits count as activity: the
+tags and releases this job creates do not. A repo that only ever gains tags therefore switches
+its own schedule off about two months after the last human commit, and the only warning is an
+email. The step pushes an empty commit once the newest commit passes 50 days, which resets the
+clock with 10 days to spare. It runs only on the `schedule` event, since a dispatch already
+means someone is active, and a failed push is logged rather than fatal, because hundreds of
+hourly attempts remain and a successful publish should not be marked failed. One caveat: this
+assumes a `GITHUB_TOKEN` commit counts as activity, which is how the widely used keepalive
+actions work but is not something this repo has yet observed across a full 60 day window.
 
 What the script does, in the order the log shows it:
 
@@ -368,6 +398,10 @@ Each of these cost real time and none is visible from the code.
   case; use a path-based manager there, which needs no marker.
 - **A comment cannot sit inside a shell `\` continuation.** Assign the version to a variable
   first, which is better practice anyway.
+- **A public repo disables its own scheduled workflow after 60 days without a commit.** Tags
+  and releases do not count as activity, which is exactly all this repo produces in steady
+  state. The schedule stops, `workflow_dispatch` keeps working, and the feed silently goes
+  stale. The keepalive step above exists for this.
 - **`npx renovate@latest` broke mid-session** with `No matching version found` for the very
   version the registry reported as `latest`. Pin a version in CI.
 
