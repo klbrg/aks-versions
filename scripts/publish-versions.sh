@@ -1,32 +1,26 @@
 #!/usr/bin/env bash
-# Publishes AKS Kubernetes version availability two ways:
+# Publishes AKS Kubernetes version availability as annotated git tags, one tag per
+# (region, channel, version).
 #
-#   1. versions/<region>.json  committed, so `git log` is an audit trail of how version
-#      availability moved over time. The files carry no timestamp on purpose: the commit
-#      date is the timestamp, so a file changes only when Azure's answer changes and the
-#      history shows real transitions instead of one empty commit per day.
+# Annotated is load-bearing. A lightweight tag has no date of its own and would inherit
+# the date of the commit it points at, which in a repo that only ever gains tags is the
+# initial commit. Every version would look months old and silently sail through
+# Renovate's minimumReleaseAge. The tagger date is the only release date available at
+# all, since Azure publishes none.
 #
-#   2. annotated git tags, one per (region, channel, version), for Renovate to consume
-#      via the github-tags datasource. Annotated is load-bearing: a lightweight tag has
-#      no date of its own and would inherit the commit date it points at, which would
-#      silently defeat Renovate's minimumReleaseAge.
-#
-# Snapshots are committed before tags are created, so each tag points at the commit that
-# recorded the data it describes.
+# The tags are also the history: `git for-each-ref --sort=taggerdate` over a stream gives
+# the dated series of what that region and channel pointed at over time.
 set -euo pipefail
 
 MIN_REGIONS="${MIN_REGIONS:-40}"
 DRY_RUN="${DRY_RUN:-false}"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(cd "$here/.." && pwd)"
 tmp="$(mktemp -d)"
 cleanup() { rm -r "$tmp" 2>/dev/null || true; }
 trap cleanup EXIT
 
 log() { printf '%s  %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
-
-cd "$repo"
 
 log "discovering AKS regions"
 az provider show --namespace Microsoft.ContainerService \
@@ -54,9 +48,7 @@ log "repo already has $(wc -l < "$tmp/existing.txt") tags"
 git config user.name  "aks-versions-bot"
 git config user.email "aks-versions-bot@users.noreply.github.com"
 
-mkdir -p versions
-: > "$tmp/desired.txt"
-
+created=0
 failed=0
 while read -r region; do
   if ! az aks get-versions --location "$region" -o json > "$tmp/v.json" 2> "$tmp/err"; then
@@ -64,64 +56,31 @@ while read -r region; do
     failed=$((failed + 1))
     continue
   fi
-
-  # -S sorts keys so the committed diff is stable across runs.
-  jq -S --arg region "$region" -f "$here/snapshot.jq" "$tmp/v.json" > "versions/$region.json"
-
   while IFS='|' read -r stream version; do
-    printf '%s|%s|%s\n' "$region" "$stream" "$version" >> "$tmp/desired.txt"
+    tag="${region}-${stream}-v${version}"
+    if grep -qxF "$tag" "$tmp/existing.txt"; then
+      continue
+    fi
+    if [ "$DRY_RUN" = "true" ]; then
+      log "would tag $tag"
+    else
+      git tag -a "$tag" \
+        -m "AKS $version is the $stream target in $region (detected $(date -u +%FT%TZ))"
+    fi
+    created=$((created + 1))
   done < <(jq -r -f "$here/streams.jq" "$tmp/v.json")
 done < "$tmp/regions.txt"
-
-# --- snapshots ---------------------------------------------------------------
-git add versions
-if git diff --cached --quiet; then
-  log "snapshots unchanged"
-  committed=false
-else
-  changed=$(git diff --cached --name-only | wc -l)
-  if [ "$DRY_RUN" = "true" ]; then
-    log "would commit $changed changed snapshot(s):"
-    git diff --cached --name-only | sed 's/^/    /' >&2
-    committed=false
-  else
-    git commit -q -m "chore: refresh AKS version snapshots ($changed region(s) changed)"
-    log "committed $changed changed snapshot(s)"
-    committed=true
-  fi
-fi
-
-# --- tags --------------------------------------------------------------------
-created=0
-while IFS='|' read -r region stream version; do
-  tag="${region}-${stream}-v${version}"
-  if grep -qxF "$tag" "$tmp/existing.txt"; then
-    continue
-  fi
-  if [ "$DRY_RUN" = "true" ]; then
-    log "would tag $tag"
-  else
-    git tag -a "$tag" \
-      -m "AKS $version is the $stream target in $region (detected $(date -u +%FT%TZ))"
-  fi
-  created=$((created + 1))
-done < "$tmp/desired.txt"
 
 log "new tags: $created   regions that failed: $failed"
 
 if [ "$DRY_RUN" = "true" ]; then
-  log "dry run, nothing committed or pushed"
+  log "dry run, nothing pushed"
+  exit 0
+fi
+if [ "$created" -eq 0 ]; then
+  log "nothing new to push"
   exit 0
 fi
 
-if [ "$committed" = "true" ]; then
-  git push -q origin HEAD:main
-  log "pushed snapshot commit"
-fi
-if [ "$created" -gt 0 ]; then
-  git push -q origin --tags
-  log "pushed $created tag(s)"
-fi
-if [ "$committed" != "true" ] && [ "$created" -eq 0 ]; then
-  log "nothing to push"
-fi
+git push origin --tags
+log "pushed $created tag(s)"

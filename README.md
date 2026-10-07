@@ -6,8 +6,7 @@ treated like any other dependency.
 There is no Renovate datasource for AKS, and no public feed of patch-level versions per
 region. The only authoritative source is the ARM call behind `az aks get-versions`, which
 requires authentication. This repo runs that call daily across every AKS region and
-republishes the result two ways: as annotated git tags for Renovate, and as committed JSON
-snapshots for history.
+republishes the result as annotated git tags.
 
 Renovate itself needs no Azure credential. It reads tags over the GitHub API.
 
@@ -35,49 +34,37 @@ germanywestcentral-patch-1.34-v1.34.11
 56 regions times roughly 8 streams each is about 450 tags at steady state, growing only
 when Azure ships a new patch somewhere.
 
-## Version snapshots
-
-`versions/<region>.json` holds the current state for each region:
-
-```json
-{
-  "channels": { "rapid": "1.36.4", "stable": "1.35.8" },
-  "patch": {
-    "1.31": "1.31.100",
-    "1.35": "1.35.8",
-    "1.36": "1.36.4"
-  },
-  "preview": ["1.37.0"],
-  "region": "germanywestcentral"
-}
-```
-
-These files deliberately contain **no timestamp**. The commit date is the timestamp, so a
-file changes only when Azure's answer changes. That makes the history meaningful:
-
-```bash
-git log --follow -p versions/germanywestcentral.json   # every transition, with dates
-git log --oneline versions/                            # days on which anything moved
-```
-
-A timestamp field would produce one commit per day regardless, and the signal would be
-buried. Keys are sorted (`jq -S`) so diffs stay minimal.
-
-Snapshots are committed before tags are created, so each tag points at the commit that
-recorded the data it describes.
-
 ## Why annotated tags
 
-The tag date is the point: it is what lets Renovate's `minimumReleaseAge` hold a new
-version back for a soak period. Azure publishes no release dates at all, not in the ARM
-response and not in the release tracker, so the only timestamp available is when this job
-first observed the version in that region.
+The tag date is the point. It is what lets Renovate's `minimumReleaseAge` hold a new
+version back for a soak period, and it is also the entire history of this repo.
 
-A lightweight tag cannot carry that. It is only a pointer to a commit and has no date of
-its own, so anything reading it falls back to the date of the commit it points at. Every
-version would report the wrong date, look months old, and sail straight through
+Azure publishes no release dates at all, not in the ARM response and not in the release
+tracker, so the only timestamp available is when this job first observed the version in
+that region. A lightweight tag cannot carry that: it is only a pointer to a commit and has
+no date of its own, so anything reading it falls back to the date of the commit it points
+at. Since this repo only ever gains tags and never new commits, every version would report
+the date of the initial commit, look months old, and sail straight through
 `minimumReleaseAge` with no error and no warning. Hence `git tag -a`, which is required
 rather than cosmetic.
+
+Because the dates are real, the tags are the audit trail. No separate snapshot file is
+needed to answer what a region and channel pointed at over time:
+
+```bash
+# the dated series for one stream
+git for-each-ref --sort=taggerdate --format='%(taggerdate:short)  %(refname:short)' \
+  'refs/tags/germanywestcentral-stable-*'
+
+# everything currently offered in one region
+git for-each-ref --format='%(refname:short)' 'refs/tags/germanywestcentral-*' | sort
+```
+
+Two things the tags deliberately do not record, because nothing consumes them today: the
+preview versions, and the per-patch upgrade graph (`1.35.8` can go to `1.36.0` through
+`1.36.4`). The upgrade graph is the one worth archiving if a need ever appears, since AKS
+forbids skipping minors and the graph is unrecoverable once Azure retires a version. It
+would mean committing the raw ARM payload per region, about 12.7 KiB each.
 
 ## Consuming from Renovate
 
@@ -140,13 +127,26 @@ Add in production, left out of this repo's config so that a dry run produces out
 why the links go in `prBodyNotes` instead. `newMajor` and `newMinor` are standard Renovate
 template fields, so `1.35.8` renders as `CHANGELOG-1.35.md`.
 
+Putting the notes in the annotated tag message does not work, and it is worth knowing why
+rather than discovering it twice. Renovate's tag GraphQL query requests only `name`, the
+target `oid` and a date, and its `transform` returns `{version, gitRef, hash,
+releaseTimestamp}`. The tag message is never fetched. The message this repo writes is for
+`git show <tag>`, not for Renovate.
+
+The only in-repo carrier Renovate reads is a GitHub **Release**, whose adapter does fetch
+`name`, `description`, `url` and `publishedAt`. Creating one Release per tag would surface
+a body in the PR, at the cost of ~450 releases on a bootstrap, and it is unverified whether
+the changelog matcher pairs a release named `germanywestcentral-stable-v1.35.8` with the
+version `1.35.8` that `extractVersion` produces. Gate it to `rapid` and `stable` and prove
+it on one dependency before trusting it.
+
 No configuration will give you AKS-specific patch notes, because Azure does not publish
 them per patch per region. The honest best is the upstream Kubernetes changelog for the
 minor, plus the dated `Azure/AKS` release notes for the rollout wave.
 
 ### Gotchas when dry-running Renovate
 
-Three things cost time and are not obvious:
+Three things cost real time and are not obvious:
 
 - Renovate reads repo config from the **default branch**. A `renovate.json` on a feature
   branch is ignored, Renovate decides the repo is not onboarded, and the onboarding config
@@ -186,15 +186,17 @@ for `locations/kubernetesVersions`, so there is nothing narrower to grant.
 
 Repo secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`.
 
+The FIC trusts `refs/heads/main` only, so a `workflow_dispatch` run on a feature branch
+cannot authenticate. That is deliberate.
+
 ## Running it
 
 ```bash
-# resolve everything, write snapshots, commit and tag nothing
+# resolve every region and log the tags it would create, without creating any
 DRY_RUN=true ./scripts/publish-versions.sh
 ```
 
 The script aborts rather than publishing a partial set if region discovery returns fewer
 than `MIN_REGIONS` (default 40) regions, so an ARM hiccup cannot quietly truncate the data.
 
-The workflow pushes to `main` using `GITHUB_TOKEN`, which by design does not retrigger
-workflows, so the snapshot commit cannot cause a loop.
+It pushes tags only and never commits, so `main` is untouched by the schedule.
