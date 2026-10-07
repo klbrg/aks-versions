@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       regions:
-        description: Space separated short names, e.g. "germanywestcentral swedencentral". Empty means every AKS region.
+        description: Space separated short names, e.g. "swedencentral northeurope". Empty means every AKS region.
         type: string
         default: ""
       backfill:

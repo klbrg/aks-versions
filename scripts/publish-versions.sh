@@ -24,8 +24,11 @@
 # whenever it is later. Creating releases alongside their tags is therefore always safe,
 # and backfilling releases for tags created earlier is actively harmful: it resets the
 # detection date and re-arms minimumReleaseAge on versions that already soaked. The only
-# safe moment to backfill is a bootstrap, when every tag is new and shares one date, which
-# is exactly what BACKFILL_RELEASES=auto detects by checking that the repo has no tags yet.
+# safe moment to backfill is a fresh instance, which BACKFILL_RELEASES=auto detects by
+# checking that the repo has no releases yet. It keys on releases rather than tags because
+# a fork or clone carries every tag but no releases, so a forked instance would otherwise
+# never get any. On a fork the dates do restart at the fork's first run, which is honest:
+# that instance genuinely observed those versions then.
 set -euo pipefail
 
 MIN_REGIONS="${MIN_REGIONS:-40}"
@@ -90,17 +93,24 @@ git ls-remote --tags origin \
 tag_count=$(wc -l < "$tmp/existing.txt")
 log "repo already has $tag_count tags"
 
+# Keyed on releases, not tags. A fork or clone carries every tag but no releases, because
+# releases are GitHub metadata rather than git objects. Keying on tags would leave a forked
+# instance with no release notes forever.
+: > "$tmp/have_releases.txt"
+release_count=0
+if gh release list --limit 2000 --json tagName --jq '.[].tagName' 2>/dev/null \
+     | sort -u > "$tmp/have_releases.txt"; then
+  release_count=$(wc -l < "$tmp/have_releases.txt")
+fi
+log "repo already has $release_count releases"
+
 case "$BACKFILL_RELEASES" in
-  auto)  if [ "$tag_count" -eq 0 ]; then backfill=true; else backfill=false; fi ;;
+  auto)  if [ "$release_count" -eq 0 ]; then backfill=true; else backfill=false; fi ;;
   true)  backfill=true ;;
   *)     backfill=false ;;
 esac
 if [ "$backfill" = "true" ]; then
-  log "backfilling releases for pre-existing tags as well (safe: bootstrap or explicitly requested)"
-  gh release list --limit 2000 --json tagName --jq '.[].tagName' 2>/dev/null \
-    | sort -u > "$tmp/have_releases.txt" || : > "$tmp/have_releases.txt"
-else
-  : > "$tmp/have_releases.txt"
+  log "backfilling releases for pre-existing tags as well"
 fi
 
 git config user.name  "aks-versions-bot"

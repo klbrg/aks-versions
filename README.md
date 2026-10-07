@@ -92,7 +92,7 @@ fresh UAMI.
 **5. Optionally limit the regions.**
 
 Set a repository variable `REGIONS` to a space separated list, for example
-`germanywestcentral swedencentral`. The default is every AKS region, which is about 450 tags
+`swedencentral swedencentral`. The default is every AKS region, which is about 450 tags
 at bootstrap and roughly 4,700 new tags a year. One region is about 8 tags and 7 a month.
 If you run in two regions, say so and keep the repo small.
 
@@ -116,9 +116,9 @@ These mirror the [AKS cluster autoupgrade channels](https://learn.microsoft.com/
 Preview minors are never tagged, because autoupgrade only ever targets GA versions.
 
 ```
-germanywestcentral-rapid-v1.36.4
-germanywestcentral-stable-v1.35.8
-germanywestcentral-patch-1.34-v1.34.11
+swedencentral-rapid-v1.36.4
+swedencentral-stable-v1.35.8
+swedencentral-patch-1.34-v1.34.11
 ```
 
 56 regions times roughly 8 streams each is about 450 tags at steady state, growing only
@@ -144,15 +144,15 @@ needed to answer what a region and channel pointed at over time:
 ```bash
 # the dated series for one stream
 git for-each-ref --sort=taggerdate --format='%(taggerdate:short)  %(refname:short)' \
-  'refs/tags/germanywestcentral-stable-*'
+  'refs/tags/swedencentral-stable-*'
 
 # everything currently offered in one region
-git for-each-ref --format='%(refname:short)' 'refs/tags/germanywestcentral-*' | sort
+git for-each-ref --format='%(refname:short)' 'refs/tags/swedencentral-*' | sort
 ```
 
 Two things the tags deliberately do not record, because nothing consumes them today: the
-preview versions, and the per-patch upgrade graph (`1.35.8` can go to `1.36.0` through
-`1.36.4`). The upgrade graph is the one worth archiving if a need ever appears, since AKS
+preview versions, and the per-patch upgrade graph, meaning the exact set of versions a
+given patch may move to. The upgrade graph is the one worth archiving if a need arises, since AKS
 forbids skipping minors and the graph is unrecoverable once Azure retires a version. It
 would mean committing the raw ARM payload per region, about 12.7 KiB each.
 
@@ -161,6 +161,14 @@ would mean committing the raw ARM payload per region, about 12.7 KiB each.
 `renovate.json` in this repo is the worked example, exercised against the fixtures in
 `examples/consumer/`. One custom manager per region and channel; `extractVersionTemplate`
 is the selector that isolates one tag stream from the other 450.
+
+**The examples use Terraform, but nothing here is Terraform-specific.** A custom manager
+matches text, not HCL. The same setup works wherever a Kubernetes version is written down:
+a Helm `values.yaml`, a Bicep parameter file, a Pulumi program, an ARM template, a
+Kustomize overlay, a CI variable file, a shell script, even a Makefile. Point
+`managerFilePatterns` at those files and put the attribute or key names you use into
+`matchStrings`. The pattern below looks for `k8s_version`, `kubernetes_version` and
+`orchestrator_version` purely because that is what the fixtures happen to call them.
 
 ```json
 {
@@ -174,7 +182,7 @@ is the selector that isolates one tag stream from the other 450.
       "depNameTemplate": "aks-gwc-stable",
       "packageNameTemplate": "klbrg/aks-versions",
       "datasourceTemplate": "github-tags",
-      "extractVersionTemplate": "^germanywestcentral-stable-v(?<version>.+)$",
+      "extractVersionTemplate": "^swedencentral-stable-v(?<version>.+)$",
       "versioningTemplate": "semver"
     }
   ],
@@ -193,11 +201,11 @@ is the selector that isolates one tag stream from the other 450.
 
 Point `extractVersionTemplate` at a different stream to change what an environment follows:
 
-| Want | Pattern | Resolves to |
-|---|---|---|
-| newest minor | `^germanywestcentral-rapid-v(?<version>.+)$` | 1.36.4 |
-| N-1, the AKS default | `^germanywestcentral-stable-v(?<version>.+)$` | 1.35.8 |
-| patches only, pinned to 1.35 | `^germanywestcentral-patch-1\.35-v(?<version>.+)$` | 1.35.8 |
+| Want | Pattern |
+|---|---|
+| newest minor | `^swedencentral-rapid-v(?<version>.+)$` |
+| N-1, the AKS default | `^swedencentral-stable-v(?<version>.+)$` |
+| patches only, pinned to one minor | `^swedencentral-patch-1\.35-v(?<version>.+)$` |
 
 Because channel is chosen by `managerFilePatterns`, dev on `rapid` and prod on `stable` is
 two managers that differ only in path and regex. Channel becomes a property of the
@@ -218,7 +226,7 @@ comment on the line above each version instead. One manager then serves every fi
 line declares its own stream:
 
 ```hcl
-# renovate: aks-stream=germanywestcentral-rapid
+# renovate: aks-stream=swedencentral-rapid
 k8s_version = "1.36.4"
 ```
 
@@ -247,9 +255,11 @@ resolved independently:
 
 | Marker | Pinned | Interpolated `extractVersion` | Resolved |
 |---|---|---|---|
-| `germanywestcentral-rapid` | 1.36.0 | `^germanywestcentral-rapid-v(?<version>.+)$` | 1.36.4 |
-| `swedencentral-stable` | 1.35.0 | `^swedencentral-stable-v(?<version>.+)$` | 1.35.8 |
-| `germanywestcentral-patch-1.34` | 1.34.5 | `^germanywestcentral-patch-1.34-v(?<version>.+)$` | 1.34.11 |
+| `swedencentral-rapid` | 1.36.0 | `^swedencentral-rapid-v(?<version>.+)$` | 1.36.4 |
+| `northeurope-stable` | 1.35.0 | `^northeurope-stable-v(?<version>.+)$` | 1.35.8 |
+| `swedencentral-patch-1.34` | 1.34.5 | `^swedencentral-patch-1.34-v(?<version>.+)$` | 1.34.11 |
+
+(Resolved values are from a run on 2026-10-07 and will have moved since.)
 
 The marker has to sit on the line immediately above the version it governs. A file with
 several version attributes, such as a cluster plus its node pools, needs one marker per
@@ -266,10 +276,13 @@ to three to get back into the support window:
 
 | Pinned at | Can reach |
 |---|---|
-| 1.35.0 … 1.35.7 | 1.35.x, 1.36.x |
-| 1.35.8, the latest of its minor | 1.36.x only |
-| 1.34.11 | 1.35.x only |
-| 1.33.13 | 1.34.x, 1.35.x, 1.36.x |
+| a patch of a minor in standard support | later patches of that same minor, plus the next minor |
+| the newest patch of such a minor | the next minor only, since nothing newer exists in its own |
+| a minor that has left standard support (`supportPlan` is `AKSLongTermSupport` only) | several minors ahead, so it can get back inside the support window |
+
+The exact sets move whenever Azure ships a patch, so read them from the data rather than
+from this table. Each Release body prints the permitted targets for its own version, and
+`az aks get-versions` is always the authority.
 
 So a cluster that skips a channel cycle can be offered a jump AKS refuses, and the refusal
 lands at `terraform apply`, after review and approval, because plan never asks AKS whether
@@ -277,11 +290,11 @@ the hop is legal.
 
 Following `patch-<minor>` removes the possibility rather than managing it. That stream only
 ever contains one minor, so the illegal version is not in the dependency's version list at
-all. Verified above: pinned at 1.34.5 it resolved to 1.34.11 and did not offer 1.36.4,
-although that tag exists.
+all. Verified above: pinned at 1.34.5 it resolved to the newest 1.34 patch and did not
+offer the newer 1.36 one, although that tag exists.
 
 ```hcl
-# renovate: aks-stream=germanywestcentral-patch-1.34
+# renovate: aks-stream=swedencentral-patch-1.34
 k8s_version = "1.34.5"
 ```
 
@@ -313,7 +326,7 @@ PR. Two facts make that work, both confirmed against Renovate's source:
 
 - The matcher is `r.tag === version || r.tag === 'v'+version || r.tag === gitRef ||
   r.tag === 'v'+gitRef`, and the tags adapter sets `gitRef` to the **raw tag name**. So a
-  release on `germanywestcentral-stable-v1.35.8` matches on `gitRef`, before
+  release on `swedencentral-stable-v1.35.8` matches on `gitRef`, before
   `extractVersion` strips the prefix. No `depName` juggling is needed.
 - Renovate needs **two** versions in the stream spanning current to new, or it logs
   `Not enough valid releases` and never reaches the matcher. This is self-satisfying in
@@ -341,10 +354,28 @@ release alongside its tag is therefore always safe, since the dates match. Backf
 release for a tag created weeks ago **replaces the real detection date with today**, which
 makes a long-soaked version look brand new and re-arms `minimumReleaseAge` against it.
 
-`auto` detects the one safe moment by checking that the repo has no tags yet, which is
-exactly when every tag is new and shares a single date. If you need to backfill later, know
-that you are resetting the dates of whatever you touch, and prefer backfilling a whole
-stream rather than part of one.
+`auto` detects a fresh instance by checking that the repo has **no releases** yet. It keys
+on releases rather than tags on purpose, because of what travels when someone copies this
+repo:
+
+| | Tags | Releases | History |
+|---|---|---|---|
+| `git clone` | yes | no | yes |
+| Fork | yes | no | yes |
+| Use this template | no | no | no, one fresh commit |
+
+Releases are GitHub metadata, not git objects, so neither a clone nor a fork brings them.
+Keying on tags would leave a forked instance with 450 tags, no releases, and `auto`
+concluding it was not a bootstrap, so it would never produce release notes at all.
+
+On a fork the tag dates restart at that instance's first run, since the backfilled releases
+carry that date. That is honest rather than lossy: your instance genuinely first observed
+those versions then, and the soak period starts from your adoption. If you want the
+original dates preserved, use the template instead and let your instance build its own
+history from scratch.
+
+Backfilling later, outside a bootstrap, resets the dates of whatever you touch. Prefer
+backfilling a whole stream over part of one.
 
 The release body carries what Azure will not give you anywhere else: the anchored upstream
 changelog link, the `supportPlan`, and the upgrade targets AKS permits from that version.

@@ -9,10 +9,10 @@
       "matchStrings": [
         "(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
-      "depNameTemplate": "aks-gwc-stable",
+      "depNameTemplate": "aks-swedencentral-stable",
       "packageNameTemplate": "klbrg/aks-versions",
       "datasourceTemplate": "github-tags",
-      "extractVersionTemplate": "^germanywestcentral-stable-v(?<version>.+)$",
+      "extractVersionTemplate": "^swedencentral-stable-v(?<version>.+)$",
       "versioningTemplate": "semver"
     },
     {
@@ -21,10 +21,10 @@
       "matchStrings": [
         "(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
-      "depNameTemplate": "aks-gwc-rapid",
+      "depNameTemplate": "aks-swedencentral-rapid",
       "packageNameTemplate": "klbrg/aks-versions",
       "datasourceTemplate": "github-tags",
-      "extractVersionTemplate": "^germanywestcentral-rapid-v(?<version>.+)$",
+      "extractVersionTemplate": "^swedencentral-rapid-v(?<version>.+)$",
       "versioningTemplate": "semver"
     },
     {
