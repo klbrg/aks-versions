@@ -5,9 +5,9 @@
 module "aks" {
   source = "git::https://github.com/cvc-partners/terraform-modules.git//modules/azure/aks?ref=azure-aks-v1.0.0"
 
-  k8s_version = "1.35.0"
+  k8s_version = "1.35.8"
 
   default_node_pool = {
-    kubernetes_version = "1.35.0"
+    kubernetes_version = "1.35.8"
   }
 }
