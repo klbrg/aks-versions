@@ -178,8 +178,10 @@ for everybody and stall the stream on a region nobody uses. One new region would
 1. **A grace period.** A region is ignored by the regionless streams until it has been
    tracked for `REGION_GRACE_DAYS` (default 30), measured from its oldest tag, so a newly
    appeared region cannot bind the intersection before it has had a fair chance to catch
-   up. A bootstrap is exempt, since then every region is new and excluding them all would
-   publish nothing.
+   up. The rule only applies once the **instance itself** is older than the grace period:
+   while it is younger, every region is equally new and excluding them all would publish
+   nothing. Keying this off tag count instead of instance age was a bug that silenced the
+   regionless streams for 30 days after a bootstrap.
 2. **Monotonicity.** A regionless tag is only created when the candidate is higher than the
    current stream head. A lagging region therefore cannot add a backwards tag dated today,
    which would be noise and would carry a misleading date.

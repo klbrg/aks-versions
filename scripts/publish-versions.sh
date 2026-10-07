@@ -219,12 +219,20 @@ done < "$tmp/regions.txt"
 #
 # A stall is still possible once a region is past its grace period and genuinely behind.
 # That is the stream being honest. The binding region is logged every run so it is visible.
+# The grace period only makes sense once the instance itself is older than it. While the
+# whole instance is younger, every region is equally new and excluding them all would
+# publish nothing, which is what keying this off tag count did.
 : > "$tmp/mature.txt"
-if [ "$tag_count" -eq 0 ]; then
+now=$(date -u +%s)
+cutoff=$(( now - REGION_GRACE_DAYS * 86400 ))
+instance_oldest=$(git for-each-ref --format='%(taggerdate:unix)' refs/tags \
+  | sort -n | head -1)
+if [ -z "$instance_oldest" ] || [ "$instance_oldest" -gt "$cutoff" ]; then
   cp "$tmp/regions.txt" "$tmp/mature.txt"
-  log "bootstrap: every region counts toward the regionless streams"
+  age_days=0
+  [ -n "$instance_oldest" ] && age_days=$(( (now - instance_oldest) / 86400 ))
+  log "instance is $age_days day(s) old, under the $REGION_GRACE_DAYS day grace period: every region counts"
 else
-  cutoff=$(( $(date -u +%s) - REGION_GRACE_DAYS * 86400 ))
   git for-each-ref --format='%(refname:short) %(taggerdate:unix)' refs/tags \
     | awk -v cutoff="$cutoff" '
         { split($1, p, "-"); if (p[1] != "" && $2 != "") {
