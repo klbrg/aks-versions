@@ -120,6 +120,51 @@ Add in production, left out of this repo's config so that a dry run produces out
   crosses minors when N moves and will arrive as a patch-looking PR that is really a
   control-plane minor upgrade
 
+### Setting a single file to follow a channel
+
+Selecting by path needs one manager per region and channel, which is fine when environments
+map onto directories. When they do not, or when one directory mixes regions, put a marker
+comment on the line above each version instead. One manager then serves every file and each
+line declares its own stream:
+
+```hcl
+# renovate: aks-stream=germanywestcentral-rapid
+k8s_version = "1.36.4"
+```
+
+The manager that reads it, already in `renovate.json`:
+
+```json
+{
+  "customType": "regex",
+  "managerFilePatterns": ["/\\.tf$/"],
+  "matchStrings": [
+    "#\\s*renovate:\\s*aks-stream=(?<depName>[a-z0-9]+-(?:rapid|stable))\\s*\\n\\s*(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+  ],
+  "packageNameTemplate": "klbrg/aks-versions",
+  "datasourceTemplate": "github-tags",
+  "extractVersionTemplate": "^{{{depName}}}-v(?<version>.+)$",
+  "versioningTemplate": "semver"
+}
+```
+
+`depName` is captured from the comment and interpolated into `extractVersionTemplate`, so
+the marker is the only thing that picks the stream. `extractVersion` is one of Renovate's
+`validMatchFields`, so it can also be written out in full in the comment if you prefer.
+
+Verified against `examples/consumer/terraform/marker/aks.tf`, where two markers in one file
+resolved independently:
+
+| Marker | Pinned | Interpolated `extractVersion` | Resolved |
+|---|---|---|---|
+| `germanywestcentral-rapid` | 1.36.0 | `^germanywestcentral-rapid-v(?<version>.+)$` | 1.36.4 |
+| `swedencentral-stable` | 1.35.0 | `^swedencentral-stable-v(?<version>.+)$` | 1.35.8 |
+
+The marker has to sit on the line immediately above the version it governs. A file with
+several version attributes, such as a cluster plus its node pools, needs one marker per
+line. If every version in a directory follows the same channel, the path-based manager is
+less repetitive.
+
 ### Release notes
 
 `github-tags` declares `sourceUrlSupport = 'package'` and derives `sourceUrl` from
@@ -133,12 +178,28 @@ target `oid` and a date, and its `transform` returns `{version, gitRef, hash,
 releaseTimestamp}`. The tag message is never fetched. The message this repo writes is for
 `git show <tag>`, not for Renovate.
 
-The only in-repo carrier Renovate reads is a GitHub **Release**, whose adapter does fetch
-`name`, `description`, `url` and `publishedAt`. Creating one Release per tag would surface
-a body in the PR, at the cost of ~450 releases on a bootstrap, and it is unverified whether
-the changelog matcher pairs a release named `germanywestcentral-stable-v1.35.8` with the
-version `1.35.8` that `extractVersion` produces. Gate it to `rapid` and `stable` and prove
-it on one dependency before trusting it.
+The only in-repo carrier Renovate reads is a GitHub **Release**, whose adapter fetches
+`name`, `description`, `url` and `publishedAt`. The publisher creates one per new `rapid`
+and `stable` tag, which is what makes a collapsible `Release Notes` section appear in the
+PR. Two facts make that work, both confirmed against Renovate's source:
+
+- The matcher is `r.tag === version || r.tag === 'v'+version || r.tag === gitRef ||
+  r.tag === 'v'+gitRef`, and the tags adapter sets `gitRef` to the **raw tag name**. So a
+  release on `germanywestcentral-stable-v1.35.8` matches on `gitRef`, before
+  `extractVersion` strips the prefix. No `depName` juggling is needed.
+- Renovate needs **two** versions in the stream spanning current to new, or it logs
+  `Not enough valid releases` and never reaches the matcher. This is self-satisfying in
+  steady state, because a consumer's pin came from the same stream. Only the very first
+  adoption of a stream, where the pin was never a channel target, goes without notes.
+
+`patch-<minor>` streams get no Release: they never cross a minor, so nobody would read the
+notes. Releases are created only for newly created tags, so the 448 tags that already exist
+are not backfilled; each stream gains notes the first time it moves.
+
+The release body carries what Azure will not give you anywhere else: the anchored upstream
+changelog link, the `supportPlan`, and the upgrade targets AKS permits from that version.
+That last one is the `upgrades` graph, and the PR is where it is actually useful, since AKS
+forbids skipping minors and Renovate has no way to know that.
 
 No configuration will give you AKS-specific patch notes, because Azure does not publish
 them per patch per region. The honest best is the upstream Kubernetes changelog for the
