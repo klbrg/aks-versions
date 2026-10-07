@@ -17,9 +17,9 @@ Point Renovate at this instance, or run your own from the template.
 - [Security](#security)
 - [Background](#background)
 - [Install](#install)
+- [Usage](#usage)
 - [Configuration](#configuration)
 - [The publishing workflow](#the-publishing-workflow)
-- [Usage](#usage)
 - [How it works](#how-it-works)
 - [Staging](#staging)
 - [Gotchas](#gotchas)
@@ -74,37 +74,6 @@ az role assignment create --assignee-object-id <principalId> \
 
 `Reader` at subscription scope is the least privilege that works. Use `--assignee-object-id`,
 not `--assignee`, whose Graph lookup often fails for a fresh identity.
-
-## Configuration
-
-All optional, set as repository variables under Settings > Secrets and variables > Actions.
-The defaults live in `scripts/publish-versions.sh`; an unset or empty variable falls back to
-them.
-
-| Variable | Default | Accepts | What it does |
-|---|---|---|---|
-| `REGIONS` | every AKS region | space separated short names, e.g. `swedencentral northeurope` | Limits what gets tagged. Set this: it controls repo size, and the regionless streams are an intersection over it. |
-| `RELEASE_STREAMS` | `rapid stable patch-*` | space separated globs | Which streams also get a GitHub Release, which is what carries release notes into the PR body. |
-| `BACKFILL_RELEASES` | `auto` | `auto`, `true`, `false` | `auto` creates releases for pre-existing tags only on a bootstrap. Read [Tag dates](#tag-dates) before setting `true`. |
-| `STANDARD_SUPPORT_ONLY` | `false` | `true`, `false` | `true` drops `patch-<minor>` streams for minors past standard support. |
-| `MIN_REGIONS` | `40` | integer | Aborts if *region discovery* returns fewer regions than this. Nothing to do with version availability. Ignored when `REGIONS` is set. |
-| `DRY_RUN` | `false` | `true`, `false` | Resolve everything, change nothing. Normally the `dryRun` dispatch input. |
-
-## The publishing workflow
-
-`.github/workflows/publish-versions.yml`:
-
-- **Triggers.** `schedule` at `23 * * * *`, plus `workflow_dispatch` with `dryRun`, `regions`
-  and `backfill`, each overriding the matching repository variable for one run.
-- **Permissions.** `contents: write` for tags and releases, `id-token: write` for the OIDC
-  token. `concurrency` allows one run at a time.
-- **Steps.** `actions/checkout` with `fetch-depth: 0`, `azure/login`,
-  `scripts/publish-versions.sh`, then a keepalive step that pushes an empty commit once the
-  newest commit passes 50 days (see [Gotchas](#gotchas)). Both actions are pinned by commit SHA.
-
-A region whose `get-versions` call fails logs a `WARN` and is skipped without failing the run.
-`rapid-v<head>` is marked as the latest release. Runs are idempotent: an existing tag keeps its
-date, so a re-run never re-arms a soak.
 
 ## Usage
 
@@ -196,6 +165,37 @@ release on `swedencentral-stable-v1.35.8` matches before `extractVersion` strips
 Renovate needs two versions spanning current to new, or it logs `Not enough valid releases`, so
 only the first adoption of a stream misses out.
 
+## Configuration
+
+All optional, set as repository variables under Settings > Secrets and variables > Actions.
+The defaults live in `scripts/publish-versions.sh`; an unset or empty variable falls back to
+them.
+
+| Variable | Default | Accepts | What it does |
+|---|---|---|---|
+| `REGIONS` | every AKS region | space separated short names, e.g. `swedencentral northeurope` | Limits what gets tagged. Set this: it controls repo size, and the regionless streams are an intersection over it. |
+| `RELEASE_STREAMS` | `rapid stable patch-*` | space separated globs | Which streams also get a GitHub Release, which is what carries release notes into the PR body. |
+| `BACKFILL_RELEASES` | `auto` | `auto`, `true`, `false` | `auto` creates releases for pre-existing tags only on a bootstrap. Read [Tag dates](#tag-dates) before setting `true`. |
+| `STANDARD_SUPPORT_ONLY` | `false` | `true`, `false` | `true` drops `patch-<minor>` streams for minors past standard support. |
+| `MIN_REGIONS` | `40` | integer | Aborts if *region discovery* returns fewer regions than this. Nothing to do with version availability. Ignored when `REGIONS` is set. |
+| `DRY_RUN` | `false` | `true`, `false` | Resolve everything, change nothing. Normally the `dryRun` dispatch input. |
+
+## The publishing workflow
+
+`.github/workflows/publish-versions.yml`:
+
+- **Triggers.** `schedule` at `23 * * * *`, plus `workflow_dispatch` with `dryRun`, `regions`
+  and `backfill`, each overriding the matching repository variable for one run.
+- **Permissions.** `contents: write` for tags and releases, `id-token: write` for the OIDC
+  token. `concurrency` allows one run at a time.
+- **Steps.** `actions/checkout` with `fetch-depth: 0`, `azure/login`,
+  `scripts/publish-versions.sh`, then a keepalive step that pushes an empty commit once the
+  newest commit passes 50 days (see [Gotchas](#gotchas)). Both actions are pinned by commit SHA.
+
+A region whose `get-versions` call fails logs a `WARN` and is skipped without failing the run.
+`rapid-v<head>` is marked as the latest release. Runs are idempotent: an existing tag keeps its
+date, so a re-run never re-arms a soak.
+
 ## How it works
 
 ### Streams
@@ -251,20 +251,12 @@ surge. Those belong to whatever applies the config.
 
 ## Gotchas
 
-- **A public repo disables its own scheduled workflow after 60 days without a commit.** Tags and
-  releases do not count as activity. `workflow_dispatch` keeps working, so the feed silently
-  goes stale. The keepalive step exists for this.
-- **`--platform=local` reads committed content, not the working tree.** Uncommitted fixtures are
-  invisible, which looks exactly like a broken regex.
 - **Renovate reads repo config from the default branch.** A `renovate.json` on a feature branch
   is ignored, and the onboarding config silently replaces your managers.
   `--use-base-branch-config=branch` does not change this.
-- **`--platform=local` never builds a PR body**, so it cannot validate `prBodyNotes`. Even
-  `--platform=github --dry-run=full` stops before `ensurePr`, so only a real PR proves the body.
-- **`allowedVersions` appears in both `exposedConfigOptions` and `supportsTemplating`.** Only the
-  second means templated.
-- **An arbitrary capture group reaches the templates.** `stream` is not one of Renovate's
-  `validMatchFields` and still interpolates, which is what lets one manager serve every stream.
+- **A public repo disables its own scheduled workflow after 60 days without a commit.** Tags and
+  releases do not count as activity. `workflow_dispatch` keeps working, so the feed silently
+  goes stale. The keepalive step exists for this.
 - **Two-part versions need `loose` versioning.** `1.35` is not valid semver.
 - **The first version on the marked line wins.** `image: foo:1.2.3 # aks 1.36.4` captures
   `1.2.3`.
@@ -272,8 +264,10 @@ surge. Those belong to whatever applies the config.
   case; use a path-based manager.
 - **A comment cannot sit inside a shell `\` continuation.** Assign the version to a variable
   first.
-- **`npx renovate@latest` broke mid-session** with `No matching version found` for the version
-  the registry reported as `latest`. Pin a version in CI.
+- **Testing with `--platform=local` has two blind spots.** It reads committed content, not the
+  working tree, so uncommitted fixtures look like a broken regex. It never builds a PR body, so
+  it cannot validate `prBodyNotes`, and `--platform=github --dry-run=full` still stops before
+  `ensurePr`.
 
 ## Maintainers
 
@@ -281,8 +275,9 @@ surge. Those belong to whatever applies the config.
 
 ## Contributing
 
-Issues and pull requests welcome. This repo is also a template; self-hosting is a supported
-path, not a second-class one.
+Pull requests accepted. Questions and bug reports go in
+[issues](https://github.com/klbrg/aks-versions/issues). This repo is also a template;
+self-hosting is a supported path, not a second-class one.
 
 Two invariants to respect when changing the publisher, both under [Tag dates](#tag-dates): tags
 must be annotated, and releases must be created alongside their tags. Both fail silently.
