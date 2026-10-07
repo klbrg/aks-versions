@@ -35,4 +35,6 @@ jobs:
       - name: Publish version tags
         env:
           DRY_RUN: ${{ github.event.inputs.dryRun || 'false' }}
+          # gh release create needs a token; GITHUB_TOKEN covers contents: write
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/publish-versions.sh

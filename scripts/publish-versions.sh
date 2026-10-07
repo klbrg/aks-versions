@@ -1,26 +1,42 @@
 #!/usr/bin/env bash
 # Publishes AKS Kubernetes version availability as annotated git tags, one tag per
-# (region, channel, version).
+# (region, channel, version), plus a GitHub Release for the rapid and stable streams.
 #
-# Annotated is load-bearing. A lightweight tag has no date of its own and would inherit
-# the date of the commit it points at, which in a repo that only ever gains tags is the
-# initial commit. Every version would look months old and silently sail through
-# Renovate's minimumReleaseAge. The tagger date is the only release date available at
-# all, since Azure publishes none.
+# Annotated tags are load-bearing. A lightweight tag has no date of its own and would
+# inherit the date of the commit it points at, which in a repo that only ever gains tags
+# is the initial commit. Every version would look months old and silently sail through
+# Renovate's minimumReleaseAge. The tagger date is the only release date available at all,
+# since Azure publishes none.
 #
-# The tags are also the history: `git for-each-ref --sort=taggerdate` over a stream gives
-# the dated series of what that region and channel pointed at over time.
+# The Releases are what make Renovate render a "Release Notes" section in its PRs.
+# Renovate matches a release by `r.tag === gitRef`, and github-tags sets gitRef to the raw
+# tag name, so a release on the tag matches directly. Only rapid and stable get one:
+# patch-<minor> streams never cross a minor, so their notes would never be read. Releases
+# are created only for newly created tags, so there is no backfill for the tags that
+# already exist.
+#
+# Note on Renovate's side: it needs two versions in a stream spanning current -> new before
+# it will fetch notes at all. That is self-satisfying once a consumer follows a stream,
+# because its pin came from that stream. Only the first adoption of a stream misses out.
 set -euo pipefail
 
 MIN_REGIONS="${MIN_REGIONS:-40}"
 DRY_RUN="${DRY_RUN:-false}"
+RELEASE_STREAMS="${RELEASE_STREAMS:-rapid stable}"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)"
 cleanup() { rm -r "$tmp" 2>/dev/null || true; }
 trap cleanup EXIT
+mkdir -p "$tmp/notes"
 
 log() { printf '%s  %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
+
+wants_release() {
+  local s="$1" w
+  for w in $RELEASE_STREAMS; do [ "$s" = "$w" ] && return 0; done
+  return 1
+}
 
 log "discovering AKS regions"
 az provider show --namespace Microsoft.ContainerService \
@@ -61,6 +77,7 @@ while read -r region; do
     if grep -qxF "$tag" "$tmp/existing.txt"; then
       continue
     fi
+
     if [ "$DRY_RUN" = "true" ]; then
       log "would tag $tag"
     else
@@ -68,10 +85,35 @@ while read -r region; do
         -m "AKS $version is the $stream target in $region (detected $(date -u +%FT%TZ))"
     fi
     created=$((created + 1))
+
+    if wants_release "$stream"; then
+      minor="${version%.*}"
+      anchor="v$(printf '%s' "$version" | tr -d '.')"
+      upgrades=$(jq -r --arg m "$minor" --arg v "$version" '
+        .values[] | select(.version == $m) | .patchVersions[$v].upgrades // []
+        | if length == 0 then "none" else join(", ") end' "$tmp/v.json")
+      plan=$(jq -r --arg m "$minor" '
+        .values[] | select(.version == $m) | .capabilities.supportPlan | join(", ")' "$tmp/v.json")
+
+      cat > "$tmp/notes/$tag.md" <<NOTES
+AKS offers Kubernetes \`$version\` in \`$region\`, and it is the current **$stream** channel target.
+
+- Upstream Kubernetes changelog: https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-$minor.md#$anchor
+- AKS release notes (rollout waves): https://github.com/Azure/AKS/releases
+
+**Upgrade targets AKS permits from \`$version\`:** $upgrades
+
+**Support plan:** $plan
+
+Detected on first appearance in this region. AKS lags upstream, so a patch present in the
+Kubernetes changelog is not necessarily offered here.
+NOTES
+    fi
   done < <(jq -r -f "$here/streams.jq" "$tmp/v.json")
 done < "$tmp/regions.txt"
 
-log "new tags: $created   regions that failed: $failed"
+pending_notes=$(find "$tmp/notes" -name '*.md' | wc -l)
+log "new tags: $created   releases to create: $pending_notes   regions that failed: $failed"
 
 if [ "$DRY_RUN" = "true" ]; then
   log "dry run, nothing pushed"
@@ -84,3 +126,18 @@ fi
 
 git push origin --tags
 log "pushed $created tag(s)"
+
+# Releases must come after the push: --verify-tag requires the tag to exist on the remote.
+releases=0
+while IFS= read -r f; do
+  tag="$(basename "$f" .md)"
+  if gh release create "$tag" \
+       --title "${tag%-v*} ${tag##*-v}" \
+       --notes-file "$f" \
+       --verify-tag >/dev/null 2>"$tmp/relerr"; then
+    releases=$((releases + 1))
+  else
+    log "WARN  release for $tag failed: $(tr -d '\n' < "$tmp/relerr" | cut -c1-110)"
+  fi
+done < <(find "$tmp/notes" -name '*.md')
+log "created $releases release(s)"
