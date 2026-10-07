@@ -52,4 +52,9 @@ jobs:
           BACKFILL_RELEASES: ${{ github.event.inputs.backfill || 'auto' }}
           # true drops patch-<minor> streams for minors that have left standard support
           STANDARD_SUPPORT_ONLY: ${{ vars.STANDARD_SUPPORT_ONLY || 'false' }}
+          # Passed bare: scripts/publish-versions.sh holds the defaults, so they are not
+          # duplicated here. An unset or empty variable falls back to the script's value.
+          RELEASE_STREAMS: ${{ vars.RELEASE_STREAMS }}
+          REGION_GRACE_DAYS: ${{ vars.REGION_GRACE_DAYS }}
+          MIN_REGIONS: ${{ vars.MIN_REGIONS }}
         run: ./scripts/publish-versions.sh
