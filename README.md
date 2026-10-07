@@ -56,17 +56,15 @@ identity.
 
 Channels mirror the AKS autoupgrade channels: `rapid` is the latest patch on the newest
 supported minor, `stable` the latest patch on minor N-1, `patch-<minor>` the latest patch on one
-specific minor.
+specific minor. Tags are annotated, and the tagger date is when that version was first seen in
+that region.
 
-Mark any line that holds a version. The marker is a comment, so its syntax is whatever the file
-already uses, and the version must sit on the line immediately below it:
+To consume the feed, mark the line above a version and point a custom manager at this repo:
 
 ```
 # renovate: aks-stream=swedencentral-stable
 version: 1.35.8
 ```
-
-One custom manager reads every marker:
 
 ```json
 {
@@ -92,16 +90,12 @@ One custom manager reads every marker:
 }
 ```
 
-`minimumReleaseAge` is the soak, measured from the tag dates. The two rollback settings block
-downgrades, which AKS never permits. `allowedVersions` keeps proposals within one minor forward,
-which is as far as AKS allows; a cluster further behind than that gets no PR at all, so point it
-at `stable` or its own `patch-<minor>` until it catches up.
+The rollback and `allowedVersions` rules keep proposals inside what AKS permits: never a
+downgrade, and never more than one minor forward.
 
-Renovate matches text, not a language, so adjust `managerFilePatterns` to your files. Omit the
-region to follow a stream available in every tracked region. To track `major.minor` instead of a
-patch, use `aks-minor=<channel>` with `"versioning": "loose"`.
-
-Working fixtures are in `examples/consumer/`.
+`examples/consumer/` has working fixtures for the other patterns, including regionless streams,
+minor-level pins, staged rollout across environments and path-based managers for formats with no
+comment syntax.
 
 ## Configuration
 
