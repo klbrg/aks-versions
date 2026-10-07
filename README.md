@@ -99,8 +99,7 @@ at `stable` or its own `patch-<minor>` until it catches up.
 
 Renovate matches text, not a language, so adjust `managerFilePatterns` to your files. Omit the
 region to follow a stream available in every tracked region. To track `major.minor` instead of a
-patch, use `aks-minor=<channel>` with `"versioning": "loose"`. Config must be on your default
-branch, or Renovate ignores it and the onboarding config replaces your managers.
+patch, use `aks-minor=<channel>` with `"versioning": "loose"`.
 
 Working fixtures are in `examples/consumer/`.
 
