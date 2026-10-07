@@ -10,6 +10,96 @@ republishes the result as annotated git tags.
 
 Renovate itself needs no Azure credential. It reads tags over the GitHub API.
 
+## Two ways to use this
+
+**Point Renovate at this repo.** Nothing to set up. Copy the config from
+[Consuming from Renovate](#consuming-from-renovate) and you are done. The tags here cover
+every AKS region, refreshed daily.
+
+**Run your own instance.** Fork or use the template, wire up one managed identity, and you
+own the whole chain. See [Running your own instance](#running-your-own-instance).
+
+Which to pick is a trust question, and the honest version is this: if these tags were ever
+wrong, whether by a bug or by someone pushing a tag for a version that does not exist, the
+result is a **failed `terraform apply`**, because AKS rejects a version it does not offer.
+The blast radius is availability, not compromise. Keep `minimumReleaseAge` on and read the
+PR, and using this repo directly is a reasonable risk. If you would rather not depend on a
+stranger's repo for your control-plane versions, self-host. Both are supported and the
+self-hosted path is not a second-class citizen.
+
+## Running your own instance
+
+Five steps. The first one is the one people get wrong.
+
+**1. Find out what OIDC subject your repo actually sends.**
+
+```bash
+gh api repos/OWNER/REPO/actions/oidc/customization/sub
+```
+
+If `use_immutable_subject` is `true`, the subject embeds numeric IDs and the form in
+Microsoft's docs will **not** match:
+
+```
+repo:OWNER@<ownerId>/REPO@<repoId>:ref:refs/heads/main
+```
+
+Use the `sub_claim_prefix` that command returns, plus `:ref:refs/heads/main`. Getting this
+wrong gives `AADSTS700213: No matching federated identity record found` at
+`azure/login`, and the federated credential is created successfully regardless, so the
+error only appears at run time.
+
+**2. Create a user-assigned managed identity and trust that subject.**
+
+A UAMI rather than an app registration because it is an ordinary ARM resource, needs no
+Entra directory role to create, and cannot have a client secret added to it later.
+
+```bash
+az group create --name rg-aks-versions --location swedencentral
+az identity create --name id-aks-versions --resource-group rg-aks-versions \
+  --location swedencentral --query '{clientId:clientId,principalId:principalId}'
+
+az identity federated-credential create \
+  --name github-main --identity-name id-aks-versions --resource-group rg-aks-versions \
+  --issuer https://token.actions.githubusercontent.com \
+  --subject '<the subject from step 1>' \
+  --audiences api://AzureADTokenExchange
+```
+
+**3. Grant it read access.**
+
+```bash
+az role assignment create \
+  --assignee-object-id <principalId> --assignee-principal-type ServicePrincipal \
+  --role Reader --scope /subscriptions/<subscription-id> \
+  --subscription <subscription-id>
+```
+
+`Reader` at subscription scope is the least privilege that works.
+`az provider operation show --namespace Microsoft.ContainerService` lists no discrete action
+for `locations/kubernetesVersions`, so there is nothing narrower to grant. Use
+`--assignee-object-id`, not `--assignee`, which needs a Graph lookup that often fails for a
+fresh UAMI.
+
+**4. Set three repository secrets.**
+
+| Secret | Value |
+|---|---|
+| `AZURE_CLIENT_ID` | the UAMI's `clientId` |
+| `AZURE_TENANT_ID` | your tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | the subscription the Reader role was granted on |
+
+**5. Optionally limit the regions.**
+
+Set a repository variable `REGIONS` to a space separated list, for example
+`germanywestcentral swedencentral`. The default is every AKS region, which is about 450 tags
+at bootstrap and roughly 4,700 new tags a year. One region is about 8 tags and 7 a month.
+If you run in two regions, say so and keep the repo small.
+
+Then run the workflow once by hand. On a bootstrap it creates every tag and, because every
+tag is new and shares one date, backfills a Release for each of them too. After that it only
+touches what changed.
+
 ## Tag scheme
 
 ```
@@ -233,8 +323,28 @@ PR. Two facts make that work, both confirmed against Renovate's source:
 All three stream kinds get a Release, controlled by `RELEASE_STREAMS` (default
 `rapid stable patch-*`, space separated globs). `patch-<minor>` is included because a
 cluster that must never make an illegal minor jump follows that stream, so it is the one
-whose PRs actually get read. Releases are created only for newly created tags, so the 448
-tags that already exist are not backfilled; each stream gains notes the first time it moves.
+whose PRs actually get read.
+
+Releases are normally created only for newly created tags. `BACKFILL_RELEASES` controls the
+exception, and the default `auto` exists because **backfilling is only safe at a bootstrap**:
+
+```js
+// renovate/lib/modules/datasource/github-tags/index.ts
+if (releaseTimestamp && (isNullOrUndefined(release.releaseTimestamp) ||
+    releaseTimestamp > release.releaseTimestamp)) {
+  release.releaseTimestamp = releaseTimestamp;   // the release date WINS
+}
+```
+
+A Release's `publishedAt` overwrites the tag's tagger date whenever it is later. Creating a
+release alongside its tag is therefore always safe, since the dates match. Backfilling a
+release for a tag created weeks ago **replaces the real detection date with today**, which
+makes a long-soaked version look brand new and re-arms `minimumReleaseAge` against it.
+
+`auto` detects the one safe moment by checking that the repo has no tags yet, which is
+exactly when every tag is new and shares a single date. If you need to backfill later, know
+that you are resetting the dates of whatever you touch, and prefer backfilling a whole
+stream rather than part of one.
 
 The release body carries what Azure will not give you anywhere else: the anchored upstream
 changelog link, the `supportPlan`, and the upgrade targets AKS permits from that version.

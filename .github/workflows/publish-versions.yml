@@ -9,6 +9,15 @@ on:
         description: Resolve versions but create no tags
         type: boolean
         default: false
+      regions:
+        description: Space separated short names, e.g. "germanywestcentral swedencentral". Empty means every AKS region.
+        type: string
+        default: ""
+      backfill:
+        description: Create releases for pre-existing tags too. auto = only on a bootstrap.
+        type: choice
+        default: auto
+        options: [auto, "true", "false"]
 
 permissions:
   contents: write
@@ -37,4 +46,8 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dryRun || 'false' }}
           # gh release create needs a token; GITHUB_TOKEN covers contents: write
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set the repository variable REGIONS to limit a self-hosted instance to the
+          # regions you actually run in. A dispatch input overrides it for one run.
+          REGIONS: ${{ github.event.inputs.regions || vars.REGIONS }}
+          BACKFILL_RELEASES: ${{ github.event.inputs.backfill || 'auto' }}
         run: ./scripts/publish-versions.sh
