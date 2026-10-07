@@ -86,7 +86,6 @@ them.
 | `REGIONS` | every AKS region | space separated short names, e.g. `swedencentral northeurope` | Limits what gets tagged. Set this: it controls repo size, and the regionless streams are an intersection over it. |
 | `RELEASE_STREAMS` | `rapid stable patch-*` | space separated globs | Which streams also get a GitHub Release, which is what carries release notes into the PR body. |
 | `BACKFILL_RELEASES` | `auto` | `auto`, `true`, `false` | `auto` creates releases for pre-existing tags only on a bootstrap. Read [Tag dates](#tag-dates) before setting `true`. |
-| `REGION_GRACE_DAYS` | `30` | integer days | How long a newly seen region is ignored before it may bind a regionless stream. |
 | `STANDARD_SUPPORT_ONLY` | `false` | `true`, `false` | `true` drops `patch-<minor>` streams for minors past standard support. |
 | `MIN_REGIONS` | `40` | integer | Aborts if *region discovery* returns fewer regions than this. Nothing to do with version availability. Ignored when `REGIONS` is set. |
 | `DRY_RUN` | `false` | `true`, `false` | Resolve everything, change nothing. Normally the `dryRun` dispatch input. |
@@ -210,8 +209,9 @@ A regionless tag carries the **lowest** of the per-region heads, which is the ne
 that applies in every tracked region. Two guards keep a newly added region from setting that
 value for everyone:
 
-- **A grace period.** A region is ignored until tracked for `REGION_GRACE_DAYS`, measured from
-  its oldest tag, and only once the instance itself is older than the grace period.
+- **A grace period.** A region is ignored for its first 30 days, measured from its oldest tag,
+  and only once the instance itself is older than that. The run logs how many regions this
+  excludes. Override with `REGION_GRACE_DAYS`.
 - **Monotonicity.** A regionless tag is created only when the candidate is higher than the
   current head.
 
