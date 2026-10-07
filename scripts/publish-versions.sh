@@ -36,6 +36,11 @@ DRY_RUN="${DRY_RUN:-false}"
 RELEASE_STREAMS="${RELEASE_STREAMS:-rapid stable patch-*}"
 BACKFILL_RELEASES="${BACKFILL_RELEASES:-auto}"
 REGIONS="${REGIONS:-}"
+STANDARD_SUPPORT_ONLY="${STANDARD_SUPPORT_ONLY:-false}"
+# Which release carries GitHub's "Latest" badge. Without an explicit choice GitHub
+# picks by date and semver across 56 unrelated tag namespaces, which lands on an
+# arbitrary region and an out-of-support minor.
+PRIMARY_REGION="${PRIMARY_REGION:-}"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)"
@@ -169,7 +174,7 @@ AKS offers Kubernetes \`$version\` in \`$region\`, and it is $label.
 AKS lags upstream, so a patch present in the Kubernetes changelog is not necessarily
 offered here. Verify against \`az aks get-versions --location $region\`.
 NOTES
-  done < <(jq -r -f "$here/streams.jq" "$tmp/v.json")
+  done < <(jq -r --argjson standard_only "${STANDARD_SUPPORT_ONLY:-false}" -f "$here/streams.jq" "$tmp/v.json")
 done < "$tmp/regions.txt"
 
 pending=$(find "$tmp/notes" -name '*.md' | wc -l)
@@ -194,7 +199,7 @@ while IFS= read -r f; do
   if gh release create "$tag" \
        --title "${tag%-v*} ${tag##*-v}" \
        --notes-file "$f" \
-       --verify-tag >/dev/null 2>"$tmp/relerr"; then
+       --verify-tag --latest=false >/dev/null 2>"$tmp/relerr"; then
     releases=$((releases + 1))
   else
     log "WARN  release for $tag failed: $(tr -d '\n' < "$tmp/relerr" | cut -c1-110)"
@@ -202,6 +207,20 @@ while IFS= read -r f; do
 done < <(find "$tmp/notes" -name '*.md')
 log "created $releases release(s)"
 
+# Designate a meaningful "Latest". The rapid head of the primary region is the newest GA
+# version AKS offers, which is the only summary of this repo that means anything.
+primary="$PRIMARY_REGION"
+if [ -z "$primary" ]; then
+  primary="$(head -1 "$tmp/regions.txt")"
+fi
+primary_tag="$(git tag --list "${primary}-rapid-v*" | sed "s|${primary}-rapid-v||" \
+  | sort -V | tail -1)"
+if [ -n "$primary_tag" ]; then
+  if gh release edit "${primary}-rapid-v${primary_tag}" --latest >/dev/null 2>&1; then
+    log "marked ${primary}-rapid-v${primary_tag} as the latest release"
+  fi
+fi
+
 if [ "$created" -eq 0 ] && [ "$releases" -eq 0 ]; then
-  log "nothing to do"
+  log "nothing new to publish"
 fi

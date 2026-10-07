@@ -89,12 +89,30 @@ fresh UAMI.
 | `AZURE_TENANT_ID` | your tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | the subscription the Reader role was granted on |
 
-**5. Optionally limit the regions.**
+**5. Optionally limit the scope.**
 
-Set a repository variable `REGIONS` to a space separated list, for example
-`swedencentral swedencentral`. The default is every AKS region, which is about 450 tags
-at bootstrap and roughly 4,700 new tags a year. One region is about 8 tags and 7 a month.
-If you run in two regions, say so and keep the repo small.
+| Repository variable | Effect |
+|---|---|
+| `REGIONS` | space separated short names, e.g. `swedencentral northeurope`. Default is every AKS region |
+| `PRIMARY_REGION` | whose `rapid` release carries GitHub's "Latest" badge. Defaults to the first region |
+| `STANDARD_SUPPORT_ONLY` | `true` drops `patch-<minor>` streams for minors that have left standard support |
+
+`REGIONS` is the one that matters. Every region is about 450 tags at bootstrap and roughly
+4,700 new tags a year. Two regions is about 16 tags and 14 a month.
+
+`STANDARD_SUPPORT_ONLY` looks like a size lever and mostly is not. It cuts 8 streams per
+region to 5, a 37% smaller bootstrap, but it barely touches growth: AKS prunes old patches
+once a minor leaves standard support, so those streams carry two entries each and are
+effectively frozen. All the growth comes from the minors you would keep. It also stops
+serving anyone deliberately sitting on an LTS version. Reach for `REGIONS` instead unless
+you specifically do not want LTS minors mirrored.
+
+`PRIMARY_REGION` exists because GitHub always designates one release as "Latest" and there
+is no way to opt out. Left to its heuristics it compares dates and semver across every
+region's tag namespace at once and lands somewhere arbitrary, typically an out-of-support
+minor in a region you do not use. Pinning it to the `rapid` head of your primary region
+makes the badge read "the newest GA version AKS offers", which is the only one-line summary
+of this repo that is true.
 
 Then run the workflow once by hand. On a bootstrap it creates every tag and, because every
 tag is new and shares one date, backfills a Release for each of them too. After that it only
