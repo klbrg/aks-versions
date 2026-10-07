@@ -50,8 +50,6 @@ jobs:
           # regions you actually run in. A dispatch input overrides it for one run.
           REGIONS: ${{ github.event.inputs.regions || vars.REGIONS }}
           BACKFILL_RELEASES: ${{ github.event.inputs.backfill || 'auto' }}
-          # Which release carries GitHub's "Latest" badge. Defaults to the first region.
-          PRIMARY_REGION: ${{ vars.PRIMARY_REGION }}
           # true drops patch-<minor> streams for minors that have left standard support
           STANDARD_SUPPORT_ONLY: ${{ vars.STANDARD_SUPPORT_ONLY || 'false' }}
         run: ./scripts/publish-versions.sh

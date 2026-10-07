@@ -33,3 +33,33 @@ module "aks_patch_pinned" {
   # renovate: aks-stream=swedencentral-patch-1.34
   k8s_version = "1.34.5"
 }
+
+# Omit the region to follow a regionless stream: the newest version available in EVERY
+# region this instance tracks. Use this when clusters in several regions have to share one
+# version string, because anything higher than the slowest region fails to apply there.
+module "aks_everywhere" {
+  source = "./modules/aks"
+
+  # renovate: aks-stream=stable
+  k8s_version = "1.35.0"
+}
+
+# The regionless patch stream, for a multi-region estate pinned to one minor.
+module "aks_everywhere_patch_pinned" {
+  source = "./modules/aks"
+
+  # renovate: aks-stream=patch-1.34
+  k8s_version = "1.34.5"
+}
+
+# Pinned ABOVE its stream head on purpose. This is the only shape that can produce a
+# downgrade: a cluster already on a newer version than the stream it follows, which happens
+# when you move a marker from rapid to stable, or when a lagging region binds a regionless
+# stream below your current pin. AKS never permits a downgrade (all 403 upgrade edges in
+# the ARM payload point strictly upward), so Renovate must not offer one.
+module "aks_above_its_stream" {
+  source = "./modules/aks"
+
+  # renovate: aks-stream=stable
+  k8s_version = "1.36.4"
+}

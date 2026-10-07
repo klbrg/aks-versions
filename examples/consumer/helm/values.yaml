@@ -1,0 +1,7 @@
+# Fixture proving the marker is not tied to one file format. Renovate matches text, so the
+# same comment works here as in HCL, Bicep, a Makefile or a .env file. The rule is simply
+# that the version appears on the line below the marker.
+
+cluster:
+  # renovate: aks-stream=stable
+  kubernetesVersion: "1.35.0"

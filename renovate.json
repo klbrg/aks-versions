@@ -1,11 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": [
+    "config:recommended"
+  ],
   "ignorePaths": [],
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/terraform/platform/prod/.+/aks/.+\\.tf$/"],
+      "managerFilePatterns": [
+        "/terraform/platform/prod/.+/aks/.+\\.tf$/"
+      ],
       "matchStrings": [
         "(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
@@ -17,7 +21,9 @@
     },
     {
       "customType": "regex",
-      "managerFilePatterns": ["/terraform/platform/dev/.+/aks/.+\\.tf$/"],
+      "managerFilePatterns": [
+        "/terraform/platform/dev/.+/aks/.+\\.tf$/"
+      ],
       "matchStrings": [
         "(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
@@ -29,24 +35,134 @@
     },
     {
       "customType": "regex",
-      "managerFilePatterns": ["/\\.tf$/"],
+      "managerFilePatterns": [
+        "/\\.(tf|ya?ml|bicep)$/"
+      ],
       "matchStrings": [
-        "#\\s*renovate:\\s*aks-stream=(?<depName>(?:[a-z0-9]+-)?(?:rapid|stable|patch-\\d+\\.\\d+))\\s*\\n\\s*(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+        "(?:#|//|;)\\s*renovate:\\s*aks-stream=(?<depName>(?:[a-z0-9]+-)?(?:rapid|stable|patch-\\d+\\.\\d+))[ \\t]*\\n[^\\n]*?(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
       "packageNameTemplate": "klbrg/aks-versions",
       "datasourceTemplate": "github-tags",
       "extractVersionTemplate": "^{{{depName}}}-v(?<version>.+)$",
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.(tf|ya?ml|bicep)$/"
+      ],
+      "matchStrings": [
+        "(?:#|//|;)\\s*renovate:\\s*aks-minor=(?<stream>(?:[a-z0-9]+-)?(?:rapid|stable))[ \\t]*\\n[^\\n]*?(?<currentValue>\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "aks-minor-{{{stream}}}",
+      "packageNameTemplate": "klbrg/aks-versions",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^{{{stream}}}-v(?<version>\\d+\\.\\d+)",
+      "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "matchStrings": [
+        "kubernetes_version\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "packageNameTemplate": "klbrg/aks-versions",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^stable-v(?<version>.+)$",
+      "versioningTemplate": "semver",
+      "managerFilePatterns": [
+        "/staged/dev/.+\\.tf$/"
+      ],
+      "depNameTemplate": "aks-dev-stable"
+    },
+    {
+      "customType": "regex",
+      "matchStrings": [
+        "kubernetes_version\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "packageNameTemplate": "klbrg/aks-versions",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^stable-v(?<version>.+)$",
+      "versioningTemplate": "semver",
+      "managerFilePatterns": [
+        "/staged/prod/.+\\.tf$/"
+      ],
+      "depNameTemplate": "aks-prod-stable"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/pathguard/behind/.+\\.tf$/"
+      ],
+      "matchStrings": [
+        "kubernetes_version\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "aks-guard-behind",
+      "packageNameTemplate": "klbrg/aks-versions",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^rapid-v(?<version>.+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/pathguard/current/.+\\.tf$/"
+      ],
+      "matchStrings": [
+        "kubernetes_version\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "aks-guard-current",
+      "packageNameTemplate": "klbrg/aks-versions",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^rapid-v(?<version>.+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/pathguard/stranded/.+\\.tf$/"
+      ],
+      "matchStrings": [
+        "kubernetes_version\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "aks-guard-stranded",
+      "packageNameTemplate": "klbrg/aks-versions",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^stable-v(?<version>.+)$",
+      "versioningTemplate": "semver"
     }
   ],
   "packageRules": [
     {
-      "matchPackageNames": ["klbrg/aks-versions"],
+      "matchPackageNames": [
+        "klbrg/aks-versions"
+      ],
       "prBodyNotes": [
         "Upstream Kubernetes changelog: https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-{{{newMajor}}}.{{{newMinor}}}.md",
         "AKS release notes: https://github.com/Azure/AKS/releases",
         "AKS lags upstream: a patch listed in the Kubernetes changelog is not necessarily offered by AKS in this region."
       ]
+    },
+    {
+      "matchPackageNames": [
+        "klbrg/aks-versions"
+      ],
+      "matchUpdateTypes": [
+        "rollback"
+      ],
+      "enabled": false
+    },
+    {
+      "matchDepNames": [
+        "aks-prod-stable"
+      ],
+      "minimumReleaseAge": "5 days"
+    },
+    {
+      "matchDepNames": [
+        "/^aks-guard-/"
+      ],
+      "allowedVersions": "<{{{major}}}.{{add minor 2}}.0"
     }
-  ]
+  ],
+  "rollbackPrs": false
 }
