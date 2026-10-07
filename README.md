@@ -10,10 +10,6 @@ it hourly across every AKS region and republishes the result as annotated git ta
 Releases, which Renovate reads with its built-in `github-tags` datasource and no Azure
 credential of its own.
 
-This fails open: an unmerged PR means an unpatched cluster, so pair it with a check comparing
-running versions against the stream head. Node-image patching is separate and should stay on
-AKS autoupgrade.
-
 ## Table of Contents
 
 - [Install](#install)
