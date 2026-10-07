@@ -1,8 +1,12 @@
 # Fixture for dry-running the Renovate config in ../../../../../renovate.json.
 # dev follows the AKS "rapid" channel: latest patch on the newest supported minor N.
+#
+# The module source is a local path on purpose. This file exists only to be matched by the
+# custom manager, and a real remote source would make Renovate's terraform manager resolve
+# an unrelated dependency on every run.
 
 module "aks" {
-  source = "git::https://github.com/cvc-partners/terraform-modules.git//modules/azure/aks?ref=azure-aks-v1.0.0"
+  source = "./modules/aks"
 
   k8s_version = "1.36.0"
 
