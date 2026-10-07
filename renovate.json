@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "ignorePaths": [],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/terraform/platform/prod/.+/aks/.+\\.tf$/"],
+      "matchStrings": [
+        "(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "aks-gwc-stable",
+      "packageNameTemplate": "klbrg/aks-versions",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^germanywestcentral-stable-v(?<version>.+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/terraform/platform/dev/.+/aks/.+\\.tf$/"],
+      "matchStrings": [
+        "(?:k8s_version|kubernetes_version|orchestrator_version)\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "aks-gwc-rapid",
+      "packageNameTemplate": "klbrg/aks-versions",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^germanywestcentral-rapid-v(?<version>.+)$",
+      "versioningTemplate": "semver"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDepNames": ["aks-gwc-stable", "aks-gwc-rapid"],
+      "prBodyNotes": [
+        "Upstream Kubernetes changelog: https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-{{{newMajor}}}.{{{newMinor}}}.md",
+        "AKS release notes: https://github.com/Azure/AKS/releases",
+        "AKS lags upstream: a patch listed in the Kubernetes changelog is not necessarily offered by AKS in this region."
+      ]
+    }
+  ]
+}
