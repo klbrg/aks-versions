@@ -3,5 +3,5 @@
 module "aks" {
   source = "./modules/aks"
 
-  kubernetes_version = "1.35.0"
+  kubernetes_version = "1.35.8"
 }
